@@ -39,6 +39,7 @@ const USERS_FILTER_COLUMN_MAP = {
     createdAt: sql.ref('users.created_at'),
     expireAt: sql.ref('users.expire_at'),
     lastTrafficResetAt: sql.ref('users.last_traffic_reset_at'),
+    trafficResetDay: sql.ref('users.traffic_reset_day'),
     subRevokedAt: sql.ref('users.sub_revoked_at'),
     telegramId: sql.ref('users.telegram_id'),
     uuid: sql.ref('users.uuid'),
@@ -567,6 +568,17 @@ export class UsersRepository {
             .where('status', '!=', USERS_STATUS.LIMITED)
             .orderBy('tId');
 
+        if (strategy === 'MONTH') {
+            targetIdsQuery = targetIdsQuery.where(
+                sql`LEAST(
+                    "traffic_reset_day",
+                    EXTRACT(DAY FROM date_trunc('month', CURRENT_DATE) + interval '1 month - 1 day')
+                )`,
+                '=',
+                sql`EXTRACT(DAY FROM CURRENT_DATE)`,
+            );
+        }
+
         if (strategy === 'MONTH_ROLLING') {
             targetIdsQuery = targetIdsQuery
                 .where(sql`("created_at" + interval '1 month')::date`, '<=', sql`CURRENT_DATE`)
@@ -642,6 +654,17 @@ export class UsersRepository {
             .where('status', '=', USERS_STATUS.LIMITED)
             .orderBy('tId')
             .forUpdate();
+
+        if (strategy === 'MONTH') {
+            targetIdsQuery = targetIdsQuery.where(
+                sql`LEAST(
+                    "traffic_reset_day",
+                    EXTRACT(DAY FROM date_trunc('month', CURRENT_DATE) + interval '1 month - 1 day')
+                )`,
+                '=',
+                sql`EXTRACT(DAY FROM CURRENT_DATE)`,
+            );
+        }
 
         if (strategy === 'MONTH_ROLLING') {
             targetIdsQuery = targetIdsQuery

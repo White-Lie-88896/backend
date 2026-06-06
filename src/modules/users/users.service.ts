@@ -74,6 +74,7 @@ export class UsersService {
                 status: dto.status,
                 trafficLimitBytes: wrapBigInt(dto.trafficLimitBytes),
                 trafficLimitStrategy: dto.trafficLimitStrategy,
+                trafficResetDay: dto.trafficResetDay,
                 email: dto.email,
                 telegramId: wrapBigIntNullable(dto.telegramId),
                 expireAt: dto.expireAt,

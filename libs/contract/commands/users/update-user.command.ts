@@ -56,6 +56,11 @@ export namespace UpdateUserCommand {
                     }
                 })
                 .optional(),
+            trafficResetDay: UsersSchema.shape.trafficResetDay
+                .optional()
+                .describe(
+                    'Day of month when monthly traffic resets. Used only with MONTH strategy.',
+                ),
             expireAt: z
                 .string()
                 .datetime({ local: true, offset: true, message: 'Invalid date format' })

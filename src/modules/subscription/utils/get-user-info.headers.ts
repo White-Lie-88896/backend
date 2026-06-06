@@ -21,7 +21,10 @@ export function getSubscriptionUserInfo(user: UserEntity): SubscriptionUserInfo 
     };
 }
 
-export function getSubscriptionRefillDate(trafficLimitStrategy: TResetPeriods): string | undefined {
+export function getSubscriptionRefillDate(
+    trafficLimitStrategy: TResetPeriods,
+    trafficResetDay: number = 1,
+): string | undefined {
     const now = new Date();
 
     switch (trafficLimitStrategy) {
@@ -35,7 +38,31 @@ export function getSubscriptionRefillDate(trafficLimitStrategy: TResetPeriods): 
             return Math.floor(now.getTime() / 1000).toString();
         }
         case 'MONTH': {
-            now.setDate(1);
+            const targetDay = Math.min(Math.max(trafficResetDay, 1), 31);
+            const candidate = new Date(now);
+            candidate.setHours(0, 10, 0, 0);
+            candidate.setDate(1);
+
+            const daysInCurrentMonth = new Date(
+                candidate.getFullYear(),
+                candidate.getMonth() + 1,
+                0,
+            ).getDate();
+            candidate.setDate(Math.min(targetDay, daysInCurrentMonth));
+
+            if (candidate <= now) {
+                candidate.setMonth(candidate.getMonth() + 1);
+                const daysInNextMonth = new Date(
+                    candidate.getFullYear(),
+                    candidate.getMonth() + 1,
+                    0,
+                ).getDate();
+                candidate.setDate(Math.min(targetDay, daysInNextMonth));
+            }
+
+            return Math.floor(candidate.getTime() / 1000).toString();
+        }
+        case 'MONTH_ROLLING': {
             now.setMonth(now.getMonth() + 1);
             now.setHours(0, 10, 0, 0);
             return Math.floor(now.getTime() / 1000).toString();

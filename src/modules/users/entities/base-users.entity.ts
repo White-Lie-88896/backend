@@ -11,6 +11,7 @@ export class BaseUserEntity implements Users {
 
     public trafficLimitBytes: bigint;
     public trafficLimitStrategy: TResetPeriods;
+    public trafficResetDay: number;
 
     public expireAt: Date;
     public subRevokedAt: Date | null;

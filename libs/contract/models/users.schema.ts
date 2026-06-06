@@ -16,6 +16,7 @@ export const UsersSchema = z.object({
             description: 'Available reset periods',
         })
         .default(RESET_PERIODS.NO_RESET),
+    trafficResetDay: z.number().int().min(1).max(31).default(1),
 
     expireAt: z
         .string()

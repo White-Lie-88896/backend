@@ -57,6 +57,7 @@ documentation
 schemes
 
 frontend
+custom-frontend-dist
 
 
 .vscode/settings.json

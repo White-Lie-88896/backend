@@ -1,0 +1,1 @@
+ALTER TABLE "users" ADD COLUMN "traffic_reset_day" INTEGER NOT NULL DEFAULT 1;

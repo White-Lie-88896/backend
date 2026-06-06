@@ -606,7 +606,10 @@ export class SubscriptionService {
             headers['profile-web-page-url'] = this.resolveSubscriptionUrl(user.shortUuid);
         }
 
-        const refillDate = getSubscriptionRefillDate(user.trafficLimitStrategy);
+        const refillDate = getSubscriptionRefillDate(
+            user.trafficLimitStrategy,
+            user.trafficResetDay,
+        );
         if (refillDate) {
             headers['subscription-refill-date'] = refillDate;
         }

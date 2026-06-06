@@ -85,6 +85,12 @@ export namespace CreateUserCommand {
                     }
                 }),
         ),
+        trafficResetDay: UsersSchema.shape.trafficResetDay
+            .optional()
+            .default(1)
+            .describe(
+                'Optional. Day of month when monthly traffic resets. Used only with MONTH strategy. Defaults to 1.',
+            ),
         expireAt: z
             .string({
                 required_error: 'Expiration date is required',
