@@ -32,6 +32,11 @@ on:
         required: true
         type: boolean
         default: true
+      deploy_to_prod:
+        description: 'Deploy the pushed image to DC1. Keep false to build and push only.'
+        required: true
+        type: boolean
+        default: false
       skip_frontend_typecheck:
         description: 'Skip npm run typecheck in the frontend.'
         required: true
@@ -147,6 +152,7 @@ jobs:
             echo "- Backend ref: \`${GITHUB_REF_NAME}\` / \`$backend_commit\`"
             echo "- Frontend ref: \`${{ inputs.frontend_ref }}\` / \`$frontend_commit\`"
             echo "- Plan only: \`${{ inputs.plan_only }}\`"
+            echo "- Deploy to production: \`${{ inputs.deploy_to_prod }}\`"
             echo "- Run migrations: \`${{ inputs.run_migrations }}\`"
             echo "- Remote compose: \`${{ inputs.remote_compose_file }}\`"
             echo "- Service: \`${{ inputs.service_name }}\`"
@@ -228,7 +234,7 @@ jobs:
         run: docker push "$IMAGE"
 
       - name: Configure SSH to DC1
-        if: ${{ !inputs.plan_only }}
+        if: ${{ !inputs.plan_only && inputs.deploy_to_prod }}
         shell: bash
         env:
           DC1_HOST: ${{ secrets.DC1_HOST }}
@@ -247,7 +253,7 @@ jobs:
           ssh-keyscan -p "${DC1_PORT:-22}" "$DC1_HOST" >> ~/.ssh/known_hosts
 
       - name: Login DC1 to GHCR for pull
-        if: ${{ !inputs.plan_only }}
+        if: ${{ !inputs.plan_only && inputs.deploy_to_prod }}
         shell: bash
         env:
           DC1_HOST: ${{ secrets.DC1_HOST }}
@@ -267,7 +273,7 @@ jobs:
           printf '%s' "$GHCR_TOKEN" | ssh -p "${DC1_PORT:-22}" "$target" "docker login ghcr.io -u \"${GHCR_USERNAME}\" --password-stdin"
 
       - name: Deploy pulled image on DC1
-        if: ${{ !inputs.plan_only }}
+        if: ${{ !inputs.plan_only && inputs.deploy_to_prod }}
         shell: bash
         env:
           DC1_HOST: ${{ secrets.DC1_HOST }}

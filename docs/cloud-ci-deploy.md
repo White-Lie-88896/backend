@@ -31,11 +31,24 @@ Open GitHub Actions and run `Cloud Build and Deploy to DC1`.
 
 Keep `plan_only` set to `true`. The workflow checks out backend/frontend, prepares the image tag, writes a summary, then stops before Docker build, push, SSH, or production changes.
 
+## Build-only run
+
+Run the same workflow with:
+
+- `plan_only`: `false`
+- `deploy_to_prod`: `false`
+- `image_tag`: optional, for example `2.7.4-cloud-v1`
+- `frontend_repository`: `White-Lie-88896/frontend`
+- `frontend_ref`: `custom`
+
+This builds the image in GitHub Actions, smoke tests it, and pushes it to GHCR without SSH or production changes.
+
 ## Real deploy run
 
 Run the same workflow with:
 
 - `plan_only`: `false`
+- `deploy_to_prod`: `true`
 - `image_tag`: optional, for example `2.7.4-cloud-v1`
 - `frontend_repository`: `White-Lie-88896/frontend`
 - `frontend_ref`: `custom`
