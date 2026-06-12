@@ -250,7 +250,7 @@ jobs:
           docker build \
             -f remnawave-backend/Dockerfile.custom \
             -t "$IMAGE" \
-            --build-arg "BRANCH=${{ steps.meta.outputs.backend_branch }}" \
+            --build-arg "BRANCH=main" \
             --build-arg "__RW_METADATA_VERSION=${{ steps.meta.outputs.image_tag }}" \
             --build-arg "__RW_METADATA_GIT_BACKEND_COMMIT=${{ steps.meta.outputs.backend_commit }}" \
             --build-arg "__RW_METADATA_GIT_FRONTEND_COMMIT=${{ steps.meta.outputs.frontend_commit }}" \

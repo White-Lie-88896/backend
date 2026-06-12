@@ -485,7 +485,7 @@ try {
         'build',
         '-f', 'Dockerfile.custom',
         '-t', $Image,
-        '--build-arg', "BRANCH=$BackendBranch",
+        '--build-arg', 'BRANCH=main',
         '--build-arg', "__RW_METADATA_VERSION=$ImageTag",
         '--build-arg', "__RW_METADATA_GIT_BACKEND_COMMIT=$BackendCommit",
         '--build-arg', "__RW_METADATA_GIT_FRONTEND_COMMIT=$FrontendCommit",
