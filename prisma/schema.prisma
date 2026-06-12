@@ -189,9 +189,10 @@ model Nodes {
 
   providerUuid String? @map("provider_uuid") @db.Uuid
 
-  viewPosition Int      @default(autoincrement()) @map("view_position")
-  countryCode  String   @default("XX") @map("country_code")
-  tags         String[] @default([]) @map("tags")
+  viewPosition     Int      @default(autoincrement()) @map("view_position")
+  countryCode      String   @default("XX") @map("country_code")
+  tags             String[] @default([]) @map("tags")
+  proxyChainConfig Json?    @map("proxy_chain_config")
 
   createdAt DateTime @default(dbgenerated("now()")) @map("created_at")
   updatedAt DateTime @default(dbgenerated("now()")) @updatedAt @map("updated_at")
@@ -205,6 +206,7 @@ model Nodes {
   connectedUsers               UserTraffic[]
   nodeMetas                    NodeMeta[]
   torrentBlockerReports        TorrentBlockerReports[]
+  egressRuleTrafficStats       EgressRuleTrafficStats[]
 
   activeConfigProfile ConfigProfiles? @relation(fields: [activeConfigProfileUuid], references: [uuid], onDelete: SetNull)
   provider            InfraProviders? @relation(fields: [providerUuid], references: [uuid], onDelete: SetNull)
@@ -475,10 +477,14 @@ model InfraProviders {
 }
 
 model InfraBillingNodes {
-  uuid          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  nodeUuid      String   @map("node_uuid") @db.Uuid
-  providerUuid  String   @map("provider_uuid") @db.Uuid
-  nextBillingAt DateTime @map("next_billing_at")
+  uuid            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nodeUuid        String   @map("node_uuid") @db.Uuid
+  providerUuid    String   @map("provider_uuid") @db.Uuid
+  nextBillingAt   DateTime @map("next_billing_at")
+  billingAmount   Float    @default(0) @map("billing_amount")
+  billingCycle    String   @default("MONTHLY") @map("billing_cycle") @db.VarChar(16)
+  billingCurrency String   @default("USD") @map("billing_currency") @db.VarChar(3)
+  reminderDays    Int[]    @default([7, 3, 0]) @map("reminder_days")
 
   provider InfraProviders @relation(fields: [providerUuid], references: [uuid], onDelete: Cascade)
   node     Nodes          @relation(fields: [nodeUuid], references: [uuid], onDelete: Cascade)
@@ -632,4 +638,234 @@ model TorrentBlockerReports {
   node Nodes @relation(fields: [nodeId], references: [id], onDelete: Cascade)
 
   @@map("torrent_blocker_reports")
+}
+
+model AuditLogs {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  createdAt DateTime @default(dbgenerated("now()")) @map("created_at")
+
+  actorType String  @map("actor_type") @db.VarChar(32)
+  actorId   String? @map("actor_id") @db.Uuid
+  actorName String? @map("actor_name") @db.VarChar(128)
+
+  action       String  @map("action") @db.VarChar(128)
+  resourceType String? @map("resource_type") @db.VarChar(64)
+  resourceId   String? @map("resource_id") @db.Uuid
+
+  ip        String? @map("ip") @db.VarChar(64)
+  userAgent String? @map("user_agent")
+
+  result   String  @map("result") @db.VarChar(32)
+  message  String? @map("message")
+  metadata Json?   @map("metadata")
+
+  @@index([createdAt(sort: Desc)])
+  @@index([actorType, createdAt(sort: Desc)])
+  @@index([action, createdAt(sort: Desc)])
+  @@index([resourceType, resourceId])
+  @@index([result, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
+
+model EgressRules {
+  uuid              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  viewPosition      Int       @default(autoincrement()) @map("view_position")
+  name              String    @map("name") @db.VarChar(128)
+  description       String?   @map("description")
+  pattern           String    @map("pattern")
+  action            String    @map("action") @db.VarChar(32)
+  isEnabled         Boolean   @default(true) @map("is_enabled")
+  targetUsers       Json?     @map("target_users")
+  proxyOutboundUuid String?   @map("proxy_outbound_uuid") @db.Uuid
+  proxyGroupUuid    String?   @map("proxy_group_uuid") @db.Uuid
+  validFrom         DateTime? @map("valid_from")
+  expiresAt         DateTime? @map("expires_at")
+  createdAt         DateTime  @default(dbgenerated("now()")) @map("created_at")
+  updatedAt         DateTime  @default(dbgenerated("now()")) @updatedAt @map("updated_at")
+
+  proxyOutbound ProxyOutbounds?          @relation(fields: [proxyOutboundUuid], references: [uuid], onDelete: SetNull)
+  proxyGroup    ProxyGroups?             @relation(fields: [proxyGroupUuid], references: [uuid], onDelete: SetNull)
+  trafficStats  EgressRuleTrafficStats[]
+
+  @@index([proxyOutboundUuid])
+  @@index([proxyGroupUuid])
+  @@index([validFrom, expiresAt])
+  @@map("egress_rules")
+}
+
+model EgressRuleTrafficStats {
+  ruleUuid      String    @map("rule_uuid") @db.Uuid
+  nodeUuid      String    @map("node_uuid") @db.Uuid
+  uplinkBytes   BigInt    @default(0) @map("uplink_bytes")
+  downlinkBytes BigInt    @default(0) @map("downlink_bytes")
+  hitCount      BigInt    @default(0) @map("hit_count")
+  lastHitAt     DateTime? @map("last_hit_at")
+  updatedAt     DateTime  @default(dbgenerated("now()")) @updatedAt @map("updated_at")
+
+  rule EgressRules @relation(fields: [ruleUuid], references: [uuid], onDelete: Cascade)
+  node Nodes       @relation(fields: [nodeUuid], references: [uuid], onDelete: Cascade)
+
+  @@id([ruleUuid, nodeUuid])
+  @@index([nodeUuid])
+  @@map("egress_rule_traffic_stats")
+}
+
+model ProxyAccessLogs {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  occurredAt DateTime @map("occurred_at")
+  createdAt  DateTime @default(dbgenerated("now()")) @map("created_at")
+
+  nodeUuid String? @map("node_uuid") @db.Uuid
+  nodeName String? @map("node_name") @db.VarChar(128)
+
+  userId   BigInt? @map("user_id")
+  userUuid String? @map("user_uuid") @db.Uuid
+  username String? @map("username") @db.VarChar(128)
+
+  targetHost String  @map("target_host") @db.VarChar(255)
+  targetIp   String? @map("target_ip") @db.VarChar(64)
+  targetPort Int?    @map("target_port")
+
+  protocol    String? @map("protocol") @db.VarChar(32)
+  network     String? @map("network") @db.VarChar(16)
+  inboundTag  String? @map("inbound_tag") @db.VarChar(128)
+  outboundTag String? @map("outbound_tag") @db.VarChar(128)
+
+  ruleUuid   String? @map("rule_uuid") @db.Uuid
+  ruleName   String? @map("rule_name") @db.VarChar(128)
+  ruleAction String? @map("rule_action") @db.VarChar(32)
+
+  uplinkBytes   BigInt @default(0) @map("uplink_bytes")
+  downlinkBytes BigInt @default(0) @map("downlink_bytes")
+  totalBytes    BigInt @default(0) @map("total_bytes")
+
+  sessionId String? @map("session_id") @db.VarChar(128)
+  metadata  Json?   @map("metadata")
+
+  @@index([occurredAt(sort: Desc)])
+  @@index([userId, occurredAt(sort: Desc)])
+  @@index([userUuid, occurredAt(sort: Desc)])
+  @@index([nodeUuid, occurredAt(sort: Desc)])
+  @@index([targetHost, occurredAt(sort: Desc)])
+  @@index([ruleUuid, occurredAt(sort: Desc)])
+  @@index([targetPort, occurredAt(sort: Desc)])
+  @@map("proxy_access_logs")
+}
+
+model ProxyAccessAuditSettings {
+  id Int @id @default(1)
+
+  isEnabled     Boolean @default(true) @map("is_enabled")
+  retentionDays Int     @default(30) @map("retention_days")
+  hideUsernames Boolean @default(false) @map("hide_usernames")
+  aggregateOnly Boolean @default(false) @map("aggregate_only")
+
+  distinctDomainWindowMinutes Int @default(10) @map("distinct_domain_window_minutes")
+  distinctDomainThreshold     Int @default(50) @map("distinct_domain_threshold")
+
+  highRiskPorts       Int[]  @default([22, 23, 25, 465, 587, 3389, 5900, 6379, 9200, 11211]) @map("high_risk_ports")
+  nodeSpikeMultiplier Int    @default(3) @map("node_spike_multiplier")
+  nodeSpikeMinBytes   BigInt @default(1073741824) @map("node_spike_min_bytes")
+
+  blacklistedHosts String[] @default([]) @map("blacklisted_hosts")
+  blacklistedIps   String[] @default([]) @map("blacklisted_ips")
+
+  createdAt DateTime @default(dbgenerated("now()")) @map("created_at")
+  updatedAt DateTime @default(dbgenerated("now()")) @updatedAt @map("updated_at")
+
+  @@map("proxy_access_audit_settings")
+}
+
+model ProxyAccessAlerts {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  createdAt DateTime @default(dbgenerated("now()")) @map("created_at")
+
+  type     String @map("type") @db.VarChar(64)
+  severity String @map("severity") @db.VarChar(16)
+  status   String @default("OPEN") @map("status") @db.VarChar(16)
+  message  String @map("message")
+
+  userId   BigInt? @map("user_id")
+  userUuid String? @map("user_uuid") @db.Uuid
+  username String? @map("username") @db.VarChar(128)
+
+  nodeUuid String? @map("node_uuid") @db.Uuid
+  nodeName String? @map("node_name") @db.VarChar(128)
+
+  targetHost String? @map("target_host") @db.VarChar(255)
+  targetIp   String? @map("target_ip") @db.VarChar(64)
+  targetPort Int?    @map("target_port")
+
+  metadata Json? @map("metadata")
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([type, createdAt(sort: Desc)])
+  @@index([severity, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([nodeUuid, createdAt(sort: Desc)])
+  @@map("proxy_access_alerts")
+}
+
+model ProxyOutbounds {
+  uuid              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name              String    @unique @map("name") @db.VarChar(128)
+  description       String?   @map("description")
+  config            Json      @map("config")
+  isEnabled         Boolean   @default(true) @map("is_enabled")
+  healthStatus      String    @default("UNKNOWN") @map("health_status") @db.VarChar(16)
+  lastLatencyMs     Int?      @map("last_latency_ms")
+  lastHealthMessage String?   @map("last_health_message")
+  lastHealthCheckAt DateTime? @map("last_health_check_at")
+  subscriptionUuid  String?   @map("subscription_uuid") @db.Uuid
+  sourceKey         String?   @map("source_key") @db.VarChar(128)
+  distributionMode  String    @default("INHERIT") @map("distribution_mode") @db.VarChar(16)
+  targetUserIds     Json      @default("[]") @map("target_user_ids")
+  targetSquadUuids  Json      @default("[]") @map("target_squad_uuids")
+  createdAt         DateTime  @default(dbgenerated("now()")) @map("created_at")
+  updatedAt         DateTime  @default(dbgenerated("now()")) @updatedAt @map("updated_at")
+
+  egressRules  EgressRules[]
+  subscription ProxySubscriptions? @relation(fields: [subscriptionUuid], references: [uuid], onDelete: Cascade)
+
+  @@unique([subscriptionUuid, sourceKey])
+  @@index([subscriptionUuid])
+  @@map("proxy_outbounds")
+}
+
+model ProxySubscriptions {
+  uuid              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name              String    @unique @db.VarChar(128)
+  url               String
+  isEnabled         Boolean   @default(true) @map("is_enabled")
+  updateIntervalMin Int       @default(360) @map("update_interval_min")
+  lastSyncAt        DateTime? @map("last_sync_at")
+  lastSyncStatus    String    @default("NEVER") @map("last_sync_status") @db.VarChar(16)
+  lastSyncMessage   String?   @map("last_sync_message")
+  distributionMode  String    @default("NONE") @map("distribution_mode") @db.VarChar(16)
+  targetUserIds     Json      @default("[]") @map("target_user_ids")
+  targetSquadUuids  Json      @default("[]") @map("target_squad_uuids")
+  createdAt         DateTime  @default(dbgenerated("now()")) @map("created_at")
+  updatedAt         DateTime  @default(dbgenerated("now()")) @updatedAt @map("updated_at")
+
+  outbounds ProxyOutbounds[]
+
+  @@map("proxy_subscriptions")
+}
+
+model ProxyGroups {
+  uuid          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String   @unique @map("name") @db.VarChar(128)
+  description   String?  @map("description")
+  mode          String   @default("FAILOVER") @map("mode") @db.VarChar(16)
+  outboundUuids Json     @map("outbound_uuids")
+  isEnabled     Boolean  @default(true) @map("is_enabled")
+  createdAt     DateTime @default(dbgenerated("now()")) @map("created_at")
+  updatedAt     DateTime @default(dbgenerated("now()")) @updatedAt @map("updated_at")
+
+  egressRules EgressRules[]
+
+  @@map("proxy_groups")
 }

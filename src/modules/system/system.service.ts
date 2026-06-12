@@ -28,6 +28,7 @@ import { calcDiff } from '@common/utils/calc-percent-diff.util';
 import { prettyBytesUtil } from '@common/utils/bytes';
 import { RawCacheService } from '@common/raw-cache';
 import { fail, ok, TResult } from '@common/types';
+import { PrismaService } from '@common/database/prisma.service';
 
 import { ResponseRulesMatcherService } from '@modules/subscription-response-rules/services/response-rules-matcher.service';
 import { ResponseRulesParserService } from '@modules/subscription-response-rules/services/response-rules-parser.service';
@@ -43,6 +44,7 @@ import { GetAllNodesQuery } from '@modules/nodes/queries/get-all-nodes';
 import {
     GenerateX25519ResponseModel,
     GetBandwidthStatsResponseModel,
+    GetDiagnosticsResponseModel,
     GetMetadataResponseModel,
     GetNodesStatisticsResponseModel,
     GetNodesStatsResponseModel,
@@ -75,6 +77,7 @@ export class SystemService implements OnApplicationBootstrap {
         private readonly srrParser: ResponseRulesParserService,
         private readonly srrMatcher: ResponseRulesMatcherService,
         private readonly rawCacheService: RawCacheService,
+        private readonly prisma: PrismaService,
     ) {}
 
     public async onApplicationBootstrap(): Promise<void> {
@@ -102,6 +105,281 @@ export class SystemService implements OnApplicationBootstrap {
             );
         } catch (error) {
             this.logger.error('Error getting system metadata:', error);
+            return fail(ERRORS.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    public async getDiagnostics(): Promise<TResult<GetDiagnosticsResponseModel>> {
+        try {
+            const now = dayjs();
+            const dueSoonAt = now.add(7, 'day').toDate();
+
+            const [
+                users,
+                activeUsers,
+                nodes,
+                enabledNodes,
+                connectedNodes,
+                auditLogs,
+                lastAuditLog,
+                proxyAccessLogs,
+                lastProxyAccessLog,
+                openAlerts,
+                warningAlerts,
+                criticalAlerts,
+                egressRules,
+                enabledEgressRules,
+                proxyOutbounds,
+                enabledProxyOutbounds,
+                unhealthyProxyOutbounds,
+                unknownProxyOutbounds,
+                proxySubscriptions,
+                failedProxySubscriptions,
+                lastSubscriptionSync,
+                egressTraffic,
+                auditSettings,
+                trackedBillingNodes,
+                overdueBillingNodes,
+                dueSoonBillingNodes,
+                runtimeMetrics,
+            ] = await Promise.all([
+                this.prisma.users.count(),
+                this.prisma.users.count({ where: { status: 'ACTIVE' } }),
+                this.prisma.nodes.count(),
+                this.prisma.nodes.count({ where: { isDisabled: false } }),
+                this.prisma.nodes.count({ where: { isConnected: true, isDisabled: false } }),
+                this.prisma.auditLogs.count(),
+                this.prisma.auditLogs.findFirst({
+                    orderBy: { createdAt: 'desc' },
+                    select: { createdAt: true },
+                }),
+                this.prisma.proxyAccessLogs.count(),
+                this.prisma.proxyAccessLogs.findFirst({
+                    orderBy: { occurredAt: 'desc' },
+                    select: { occurredAt: true },
+                }),
+                this.prisma.proxyAccessAlerts.count({ where: { status: 'OPEN' } }),
+                this.prisma.proxyAccessAlerts.count({ where: { severity: 'warning' } }),
+                this.prisma.proxyAccessAlerts.count({ where: { severity: 'critical' } }),
+                this.prisma.egressRules.count(),
+                this.prisma.egressRules.count({ where: { isEnabled: true } }),
+                this.prisma.proxyOutbounds.count(),
+                this.prisma.proxyOutbounds.count({ where: { isEnabled: true } }),
+                this.prisma.proxyOutbounds.count({
+                    where: { isEnabled: true, healthStatus: { in: ['UNHEALTHY', 'ERROR'] } },
+                }),
+                this.prisma.proxyOutbounds.count({
+                    where: { isEnabled: true, healthStatus: 'UNKNOWN' },
+                }),
+                this.prisma.proxySubscriptions.count(),
+                this.prisma.proxySubscriptions.count({
+                    where: { isEnabled: true, lastSyncStatus: { in: ['FAILED', 'ERROR'] } },
+                }),
+                this.prisma.proxySubscriptions.findFirst({
+                    orderBy: { lastSyncAt: 'desc' },
+                    select: { lastSyncAt: true },
+                    where: { lastSyncAt: { not: null } },
+                }),
+                this.prisma.egressRuleTrafficStats.aggregate({
+                    _sum: {
+                        downlinkBytes: true,
+                        hitCount: true,
+                        uplinkBytes: true,
+                    },
+                }),
+                this.prisma.proxyAccessAuditSettings.findUnique({ where: { id: 1 } }),
+                this.prisma.infraBillingNodes.count(),
+                this.prisma.infraBillingNodes.count({
+                    where: { nextBillingAt: { lt: now.toDate() } },
+                }),
+                this.prisma.infraBillingNodes.count({
+                    where: { nextBillingAt: { gte: now.toDate(), lte: dueSoonAt } },
+                }),
+                this.rawCacheService.hgetallParsed<Record<string, RuntimeMetric>>(
+                    INTERNAL_CACHE_KEYS.RUNTIME_METRICS,
+                ),
+            ]);
+
+            const runtimeValues = Object.values(runtimeMetrics ?? {});
+            const runtimeTimestamps = runtimeValues.map((metric) => metric.timestamp);
+            const enabledOutboundsWithIssue = unhealthyProxyOutbounds + unknownProxyOutbounds;
+            const ruleTrafficBytes =
+                (egressTraffic._sum.uplinkBytes ?? 0n) + (egressTraffic._sum.downlinkBytes ?? 0n);
+
+            const checks: GetDiagnosticsResponseModel['checks'] = [
+                {
+                    key: 'database',
+                    label: 'Database',
+                    status: 'OK',
+                    message: `Database is reachable. ${users} users and ${nodes} nodes are stored.`,
+                },
+                {
+                    key: 'nodes',
+                    label: 'Nodes',
+                    status:
+                        enabledNodes === 0
+                            ? 'WARN'
+                            : connectedNodes === 0
+                              ? 'FAIL'
+                              : connectedNodes < enabledNodes
+                                ? 'WARN'
+                                : 'OK',
+                    message: `${connectedNodes}/${enabledNodes} enabled nodes are connected.`,
+                },
+                {
+                    key: 'runtime',
+                    label: 'Runtime',
+                    status: runtimeValues.length === 0 ? 'WARN' : 'OK',
+                    message:
+                        runtimeValues.length === 0
+                            ? 'No runtime heartbeat metrics are currently cached.'
+                            : `${runtimeValues.length} runtime instance(s) are reporting heartbeat metrics.`,
+                },
+                {
+                    key: 'proxy-outbounds',
+                    label: 'Proxy outbounds',
+                    status:
+                        enabledProxyOutbounds === 0
+                            ? 'OK'
+                            : unhealthyProxyOutbounds > 0
+                              ? 'FAIL'
+                              : unknownProxyOutbounds > 0
+                                ? 'WARN'
+                                : 'OK',
+                    message:
+                        enabledProxyOutbounds === 0
+                            ? 'No enabled proxy outbounds are configured.'
+                            : `${enabledOutboundsWithIssue}/${enabledProxyOutbounds} enabled proxy outbounds need attention.`,
+                },
+                {
+                    key: 'proxy-subscriptions',
+                    label: 'Proxy subscriptions',
+                    status: failedProxySubscriptions > 0 ? 'WARN' : 'OK',
+                    message:
+                        failedProxySubscriptions > 0
+                            ? `${failedProxySubscriptions} enabled proxy subscription(s) failed their last sync.`
+                            : `${proxySubscriptions} proxy subscription(s) are configured.`,
+                },
+                {
+                    key: 'proxy-access-audit',
+                    label: 'Proxy access audit',
+                    status:
+                        auditSettings?.isEnabled === false
+                            ? 'WARN'
+                            : proxyAccessLogs === 0
+                              ? 'WARN'
+                              : 'OK',
+                    message:
+                        auditSettings?.isEnabled === false
+                            ? 'Proxy access audit is currently disabled.'
+                            : proxyAccessLogs === 0
+                              ? 'No proxy access log has been ingested yet.'
+                              : `${proxyAccessLogs} proxy access log(s) are available.`,
+                },
+                {
+                    key: 'alerts',
+                    label: 'Audit alerts',
+                    status: criticalAlerts > 0 ? 'FAIL' : openAlerts > 0 ? 'WARN' : 'OK',
+                    message:
+                        openAlerts > 0
+                            ? `${openAlerts} proxy access alert(s) are still open.`
+                            : 'No open proxy access alerts.',
+                },
+                {
+                    key: 'billing',
+                    label: 'Billing',
+                    status:
+                        overdueBillingNodes > 0 ? 'FAIL' : dueSoonBillingNodes > 0 ? 'WARN' : 'OK',
+                    message:
+                        overdueBillingNodes > 0
+                            ? `${overdueBillingNodes} billing node(s) are overdue.`
+                            : `${dueSoonBillingNodes} billing node(s) renew in the next 7 days.`,
+                },
+            ];
+
+            return ok(
+                new GetDiagnosticsResponseModel({
+                    generatedAt: now.toISOString(),
+                    version: {
+                        app:
+                            this.rwVersion ||
+                            this.configService.getOrThrow<string>('__RW_METADATA_VERSION'),
+                        backendCommitSha: this.configService.getOrThrow<string>(
+                            '__RW_METADATA_GIT_BACKEND_COMMIT',
+                        ),
+                        frontendCommitSha: this.configService.getOrThrow<string>(
+                            '__RW_METADATA_GIT_FRONTEND_COMMIT',
+                        ),
+                        branch: this.configService.getOrThrow<string>('__RW_METADATA_GIT_BRANCH'),
+                        buildTime: this.configService.getOrThrow<string>(
+                            '__RW_METADATA_BUILD_TIME',
+                        ),
+                        buildNumber: this.configService.getOrThrow<string>(
+                            '__RW_METADATA_BUILD_NUMBER',
+                        ),
+                    },
+                    database: {
+                        ok: true,
+                        users,
+                        activeUsers,
+                        nodes,
+                        enabledNodes,
+                        connectedNodes,
+                        auditLogs,
+                        proxyAccessLogs,
+                        proxyAccessAlertsOpen: openAlerts,
+                        lastAuditLogAt: lastAuditLog?.createdAt.toISOString() ?? null,
+                        lastProxyAccessLogAt: lastProxyAccessLog?.occurredAt.toISOString() ?? null,
+                    },
+                    runtime: {
+                        instances: runtimeValues.length,
+                        apiInstances: runtimeValues.filter(
+                            (metric) => metric.instanceType === 'api',
+                        ).length,
+                        schedulerInstances: runtimeValues.filter(
+                            (metric) => metric.instanceType === 'scheduler',
+                        ).length,
+                        processorInstances: runtimeValues.filter(
+                            (metric) => metric.instanceType === 'processor',
+                        ).length,
+                        oldestMetricAt:
+                            runtimeTimestamps.length > 0 ? Math.min(...runtimeTimestamps) : null,
+                        newestMetricAt:
+                            runtimeTimestamps.length > 0 ? Math.max(...runtimeTimestamps) : null,
+                    },
+                    egress: {
+                        rules: egressRules,
+                        enabledRules: enabledEgressRules,
+                        proxyOutbounds,
+                        enabledProxyOutbounds,
+                        unhealthyProxyOutbounds,
+                        unknownProxyOutbounds,
+                        proxySubscriptions,
+                        failedProxySubscriptions,
+                        lastSubscriptionSyncAt:
+                            lastSubscriptionSync?.lastSyncAt?.toISOString() ?? null,
+                        ruleHitCount: (egressTraffic._sum.hitCount ?? 0n).toString(),
+                        ruleTrafficBytes: ruleTrafficBytes.toString(),
+                    },
+                    audit: {
+                        isEnabled: auditSettings?.isEnabled ?? true,
+                        retentionDays: auditSettings?.retentionDays ?? 30,
+                        aggregateOnly: auditSettings?.aggregateOnly ?? false,
+                        hideUsernames: auditSettings?.hideUsernames ?? false,
+                        openAlerts,
+                        warningAlerts,
+                        criticalAlerts,
+                    },
+                    billing: {
+                        trackedNodes: trackedBillingNodes,
+                        overdueNodes: overdueBillingNodes,
+                        dueSoonNodes: dueSoonBillingNodes,
+                    },
+                    checks,
+                }),
+            );
+        } catch (error) {
+            this.logger.error('Error getting system diagnostics:', error);
             return fail(ERRORS.INTERNAL_SERVER_ERROR);
         }
     }

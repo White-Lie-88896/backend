@@ -1,3 +1,5 @@
+import { Request } from 'express';
+
 import {
     ApiBearerAuth,
     ApiCreatedResponse,
@@ -7,12 +9,23 @@ import {
     ApiQuery,
     ApiTags,
 } from '@nestjs/swagger';
-import { Body, Controller, HttpStatus, Param, Query, UseFilters, UseGuards } from '@nestjs/common';
+import {
+    Body,
+    Controller,
+    HttpStatus,
+    Param,
+    Query,
+    Req,
+    UseFilters,
+    UseGuards,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import { HttpExceptionFilter } from '@common/exception/http-exception.filter';
+import { UserAgent } from '@common/decorators/get-useragent/get-useragent';
 import { JwtDefaultGuard } from '@common/guards/jwt-guards/def-jwt-guard';
 import { errorHandler } from '@common/helpers/error-handler.helper';
+import { IpAddress } from '@common/decorators/get-ip/get-ip';
 import { Endpoint } from '@common/decorators/base-endpoint';
 import { Roles } from '@common/decorators/roles/roles';
 import { RolesGuard } from '@common/guards/roles';
@@ -39,6 +52,9 @@ import {
 } from '@libs/contracts/commands';
 import { CONTROLLERS_INFO, USERS_CONTROLLER } from '@libs/contracts/api';
 import { ROLE } from '@libs/contracts/constants';
+
+import { IJWTAuthPayload } from '@modules/auth/interfaces';
+import { AuditLogsService } from '@modules/audit-logs';
 
 import {
     CreateUserRequestDto,
@@ -100,6 +116,7 @@ export class UsersController {
     constructor(
         private readonly usersService: UsersService,
         private readonly configService: ConfigService,
+        private readonly auditLogsService: AuditLogsService,
     ) {
         this.subPublicDomain = this.configService.getOrThrow<string>('SUB_PUBLIC_DOMAIN');
     }
@@ -113,8 +130,22 @@ export class UsersController {
         httpCode: HttpStatus.CREATED,
         apiBody: CreateUserRequestDto,
     })
-    async createUser(@Body() body: CreateUserRequestDto): Promise<CreateUserResponseDto> {
+    async createUser(
+        @Body() body: CreateUserRequestDto,
+        @Req() request: Request,
+        @IpAddress() ip: string,
+        @UserAgent() userAgent: string,
+    ): Promise<CreateUserResponseDto> {
         const result = await this.usersService.createUser(body);
+
+        await this.auditUserOperation(request, {
+            action: 'user.create',
+            resourceId: result.isOk ? result.response.uuid : null,
+            resourceName: body.username,
+            ip,
+            userAgent,
+            success: result.isOk,
+        });
 
         const data = errorHandler(result);
         return {
@@ -131,8 +162,22 @@ export class UsersController {
         httpCode: HttpStatus.OK,
         apiBody: UpdateUserRequestDto,
     })
-    async updateUser(@Body() body: UpdateUserRequestDto): Promise<UpdateUserResponseDto> {
+    async updateUser(
+        @Body() body: UpdateUserRequestDto,
+        @Req() request: Request,
+        @IpAddress() ip: string,
+        @UserAgent() userAgent: string,
+    ): Promise<UpdateUserResponseDto> {
         const result = await this.usersService.updateUser(body);
+
+        await this.auditUserOperation(request, {
+            action: 'user.update',
+            resourceId: result.isOk ? result.response.uuid : (body.uuid ?? null),
+            resourceName: result.isOk ? result.response.username : (body.username ?? null),
+            ip,
+            userAgent,
+            success: result.isOk,
+        });
 
         const data = errorHandler(result);
         return {
@@ -152,8 +197,22 @@ export class UsersController {
         command: DeleteUserCommand,
         httpCode: HttpStatus.OK,
     })
-    async deleteUser(@Param() paramData: DeleteUserRequestDto): Promise<DeleteUserResponseDto> {
+    async deleteUser(
+        @Param() paramData: DeleteUserRequestDto,
+        @Req() request: Request,
+        @IpAddress() ip: string,
+        @UserAgent() userAgent: string,
+    ): Promise<DeleteUserResponseDto> {
         const result = await this.usersService.deleteUser(paramData.uuid);
+
+        await this.auditUserOperation(request, {
+            action: 'user.delete',
+            resourceId: paramData.uuid,
+            resourceName: null,
+            ip,
+            userAgent,
+            success: result.isOk,
+        });
 
         const data = errorHandler(result);
         return {
@@ -587,5 +646,39 @@ export class UsersController {
         return {
             response: data,
         };
+    }
+
+    private async auditUserOperation(
+        request: Request,
+        operation: {
+            action: string;
+            resourceId: string | null;
+            resourceName: string | null;
+            ip: string;
+            userAgent: string;
+            success: boolean;
+        },
+    ): Promise<void> {
+        const actor = request.user as IJWTAuthPayload | undefined;
+
+        await this.auditLogsService.createLog({
+            actorType: actor?.role === ROLE.API ? 'system' : 'admin',
+            actorId: actor?.uuid,
+            actorName: actor?.username ?? (actor?.role === ROLE.API ? 'API token' : null),
+            action: operation.action,
+            resourceType: 'user',
+            resourceId: operation.resourceId,
+            ip: operation.ip,
+            userAgent: operation.userAgent,
+            result: operation.success ? 'success' : 'failed',
+            message: operation.success
+                ? `${operation.action} succeeded.`
+                : `${operation.action} failed.`,
+            metadata: operation.resourceName
+                ? {
+                      username: operation.resourceName,
+                  }
+                : undefined,
+        });
     }
 }

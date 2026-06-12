@@ -9,10 +9,13 @@ import { GetCombinedStatsCommand } from '@remnawave/node-contract';
 
 import { MESSAGING_NAMES, MICROSERVICES_NAMES } from '@common/microservices';
 import { AxiosService } from '@common/axios';
+import { IngestProxyAccessLogsCommand } from '@libs/contracts/commands';
 
 import { UpsertHistoryEntryCommand } from '@modules/nodes-usage-history/commands/upsert-history-entry';
 import { IncrementUsedTrafficCommand } from '@modules/nodes/commands/increment-used-traffic';
 import { NodesUsageHistoryEntity } from '@modules/nodes-usage-history';
+import { EgressRulesService } from '@modules/egress-rules';
+import { ProxyAccessAuditService } from '@modules/proxy-access-audit/proxy-access-audit.service';
 
 import { INodeMetrics } from '@scheduler/tasks/export-metrics/node-metrics.message.interface';
 
@@ -20,6 +23,8 @@ import { QUEUES_NAMES } from '@queue/queue.enum';
 
 import { NODES_JOB_NAMES } from '../constants/nodes-job-name.constant';
 import { IRecordNodeUsagePayload } from '../interfaces';
+
+const PROXY_ACCESS_AUDIT_INGEST_BATCH_SIZE = 1000;
 
 @Processor(QUEUES_NAMES.NODES.RECORD_NODE_USAGE, {
     concurrency: 40,
@@ -30,6 +35,8 @@ export class RecordNodeUsageQueueProcessor extends WorkerHost {
     constructor(
         private readonly commandBus: CommandBus,
         private readonly axios: AxiosService,
+        private readonly egressRulesService: EgressRulesService,
+        private readonly proxyAccessAuditService: ProxyAccessAuditService,
         @Inject(MICROSERVICES_NAMES.REDIS_PRODUCER) private readonly redisProducer: ClientProxy,
     ) {
         super();
@@ -54,6 +61,8 @@ export class RecordNodeUsageQueueProcessor extends WorkerHost {
                 return;
             }
 
+            await this.collectProxyAccessAuditLogs(nodeUuid, nodeAddress, nodePort);
+
             return this.handleOk(nodeUuid, combinedStats.response);
         } catch (error) {
             this.logger.error(
@@ -61,6 +70,61 @@ export class RecordNodeUsageQueueProcessor extends WorkerHost {
             );
 
             return { isOk: false };
+        }
+    }
+
+    private async collectProxyAccessAuditLogs(
+        nodeUuid: string,
+        nodeAddress: string,
+        nodePort: null | number,
+    ): Promise<void> {
+        const snapshot = await this.axios.getAccessAuditLogs(
+            {
+                reset: false,
+            },
+            nodeAddress,
+            nodePort,
+        );
+
+        if (!snapshot.isOk) {
+            this.logger.warn(`Node ${nodeUuid} access audit logs are not available, skipping`);
+            return;
+        }
+
+        const { logs, cursor, dropped } = snapshot.response;
+        if (dropped > 0) {
+            this.logger.warn(`Node ${nodeUuid} dropped ${dropped} access audit logs`);
+        }
+
+        if (logs.length === 0 || cursor === 0) return;
+
+        const ingestLogs: IngestProxyAccessLogsCommand.Request['logs'] = logs.map((log) => ({
+            ...log,
+            nodeUuid,
+        }));
+
+        for (let i = 0; i < ingestLogs.length; i += PROXY_ACCESS_AUDIT_INGEST_BATCH_SIZE) {
+            const chunk = ingestLogs.slice(i, i + PROXY_ACCESS_AUDIT_INGEST_BATCH_SIZE);
+            const result = await this.proxyAccessAuditService.ingestLogs({ logs: chunk });
+
+            if (!result.isOk) {
+                this.logger.warn(`Failed to ingest access audit logs for node ${nodeUuid}`);
+                return;
+            }
+        }
+
+        const ack = await this.axios.getAccessAuditLogs(
+            {
+                reset: true,
+                cursor,
+                includeLogs: false,
+            },
+            nodeAddress,
+            nodePort,
+        );
+
+        if (!ack.isOk) {
+            this.logger.warn(`Failed to acknowledge access audit logs for node ${nodeUuid}`);
         }
     }
 
@@ -91,6 +155,8 @@ export class RecordNodeUsageQueueProcessor extends WorkerHost {
             }),
             { totalDownlink: 0, totalUplink: 0 },
         ) || { totalDownlink: 0, totalUplink: 0 };
+
+        await this.egressRulesService.recordRuleTraffic(nodeUuid, combinedStats.outbounds);
 
         if (totalDownlink === 0 && totalUplink === 0) {
             return;

@@ -184,8 +184,12 @@ export class InfraBillingService {
         dto: UpdateInfraBillingNodeRequestDto,
     ): Promise<TResult<GetBillingNodesResponseModel>> {
         try {
-            await this.infraBillingNodeRepository.updateManyBillingAt({
+            await this.infraBillingNodeRepository.updateMany({
                 uuids: dto.uuids,
+                billingAmount: dto.billingAmount,
+                billingCycle: dto.billingCycle,
+                billingCurrency: dto.billingCurrency,
+                reminderDays: dto.reminderDays,
                 nextBillingAt: dto.nextBillingAt,
             });
 

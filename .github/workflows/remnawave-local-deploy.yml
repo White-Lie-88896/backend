@@ -1,0 +1,109 @@
+name: Local CI Deploy to DC1
+
+on:
+  workflow_dispatch:
+    inputs:
+      plan_only:
+        description: 'Only print the deployment plan. Keep true for the first learning run.'
+        required: true
+        type: boolean
+        default: true
+      image_tag:
+        description: 'Optional Docker tag, for example 2.7.4-qr-import-v2. Empty means auto-generate.'
+        required: false
+        type: string
+      workspace_root:
+        description: 'Windows folder that contains remnawave-backend and remnawave-frontend.'
+        required: true
+        type: string
+        default: 'D:\development\claude-code'
+      prod_host:
+        description: 'SSH host alias for the production server.'
+        required: true
+        type: string
+        default: 'DC1'
+      run_migrations:
+        description: 'Run Prisma migrations before switching the backend container.'
+        required: true
+        type: boolean
+        default: true
+      skip_frontend_typecheck:
+        description: 'Skip npm run typecheck in the frontend.'
+        required: true
+        type: boolean
+        default: false
+      skip_smoke_test:
+        description: 'Skip local Docker image smoke test.'
+        required: true
+        type: boolean
+        default: false
+      panel_url:
+        description: 'Panel URL checked after the service becomes healthy.'
+        required: false
+        type: string
+        default: 'https://panel.5555557.xyz'
+
+concurrency:
+  group: remnawave-local-deploy
+  cancel-in-progress: false
+
+jobs:
+  local-deploy:
+    name: Build locally and deploy through DC1 SSH
+    runs-on: [self-hosted, Windows]
+    timeout-minutes: 180
+
+    env:
+      INPUT_PLAN_ONLY: ${{ inputs.plan_only }}
+      INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
+      INPUT_WORKSPACE_ROOT: ${{ inputs.workspace_root }}
+      INPUT_PROD_HOST: ${{ inputs.prod_host }}
+      INPUT_RUN_MIGRATIONS: ${{ inputs.run_migrations }}
+      INPUT_SKIP_FRONTEND_TYPECHECK: ${{ inputs.skip_frontend_typecheck }}
+      INPUT_SKIP_SMOKE_TEST: ${{ inputs.skip_smoke_test }}
+      INPUT_PANEL_URL: ${{ inputs.panel_url }}
+
+    steps:
+      - name: Checkout backend workflow scripts
+        uses: actions/checkout@v4
+
+      - name: Show runner context
+        shell: powershell
+        run: |
+          $PSVersionTable.PSVersion
+          Write-Host "Runner: $env:RUNNER_NAME"
+          Write-Host "Workspace root: $env:INPUT_WORKSPACE_ROOT"
+          docker --version
+          git --version
+          ssh -V
+
+      - name: Build and deploy
+        shell: powershell
+        run: |
+          $arguments = @(
+            '-WorkspaceRoot', $env:INPUT_WORKSPACE_ROOT,
+            '-ProdHost', $env:INPUT_PROD_HOST,
+            '-PanelUrl', $env:INPUT_PANEL_URL
+          )
+
+          if ($env:INPUT_IMAGE_TAG) {
+            $arguments += @('-ImageTag', $env:INPUT_IMAGE_TAG)
+          }
+
+          if ($env:INPUT_PLAN_ONLY -eq 'true') {
+            $arguments += '-PlanOnly'
+          }
+
+          if ($env:INPUT_RUN_MIGRATIONS -eq 'true') {
+            $arguments += '-RunMigrations'
+          }
+
+          if ($env:INPUT_SKIP_FRONTEND_TYPECHECK -eq 'true') {
+            $arguments += '-SkipFrontendTypecheck'
+          }
+
+          if ($env:INPUT_SKIP_SMOKE_TEST -eq 'true') {
+            $arguments += '-SkipSmokeTest'
+          }
+
+          .\scripts\deploy-remnawave-local-ci.ps1 @arguments

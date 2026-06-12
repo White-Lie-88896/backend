@@ -1,3 +1,5 @@
+import { Request } from 'express';
+
 import { CONTROLLERS_INFO, NODES_CONTROLLER } from '@contract/api';
 import { ROLE } from '@contract/constants';
 
@@ -8,12 +10,14 @@ import {
     ApiParam,
     ApiTags,
 } from '@nestjs/swagger';
-import { Body, Controller, HttpStatus, Param, UseFilters, UseGuards } from '@nestjs/common';
+import { Body, Controller, HttpStatus, Param, Req, UseFilters, UseGuards } from '@nestjs/common';
 
 import { HttpExceptionFilter } from '@common/exception/http-exception.filter';
 import { JwtDefaultGuard } from '@common/guards/jwt-guards/def-jwt-guard';
 import { errorHandler } from '@common/helpers/error-handler.helper';
 import { RolesGuard } from '@common/guards/roles/roles.guard';
+import { UserAgent } from '@common/decorators/get-useragent/get-useragent';
+import { IpAddress } from '@common/decorators/get-ip/get-ip';
 import { Endpoint } from '@common/decorators/base-endpoint';
 import { Roles } from '@common/decorators/roles/roles';
 import {
@@ -67,6 +71,9 @@ import { GetAllNodesTagsResponseModel } from './models';
 import { EnableNodeRequestParamDto } from './dtos';
 import { NodesService } from './nodes.service';
 
+import { IJWTAuthPayload } from '@modules/auth/interfaces';
+import { AuditLogsService } from '@modules/audit-logs';
+
 @ApiBearerAuth('Authorization')
 @ApiTags(CONTROLLERS_INFO.NODES.tag)
 @Roles(ROLE.ADMIN, ROLE.API)
@@ -74,7 +81,10 @@ import { NodesService } from './nodes.service';
 @UseFilters(HttpExceptionFilter)
 @Controller(NODES_CONTROLLER)
 export class NodesController {
-    constructor(private readonly nodesService: NodesService) {}
+    constructor(
+        private readonly nodesService: NodesService,
+        private readonly auditLogsService: AuditLogsService,
+    ) {}
 
     @ApiOkResponse({
         type: GetAllNodesTagsResponseDto,
@@ -101,8 +111,22 @@ export class NodesController {
         httpCode: HttpStatus.CREATED,
         apiBody: CreateNodeRequestDto,
     })
-    async createNode(@Body() body: CreateNodeRequestDto): Promise<CreateNodeResponseDto> {
+    async createNode(
+        @Body() body: CreateNodeRequestDto,
+        @Req() request: Request,
+        @IpAddress() ip: string,
+        @UserAgent() userAgent: string,
+    ): Promise<CreateNodeResponseDto> {
         const result = await this.nodesService.createNode(body);
+
+        await this.auditNodeOperation(request, {
+            action: 'node.create',
+            resourceId: result.isOk ? result.response.uuid : null,
+            resourceName: body.name,
+            ip,
+            userAgent,
+            success: result.isOk,
+        });
 
         const data = errorHandler(result);
         return {
@@ -152,8 +176,23 @@ export class NodesController {
         command: EnableNodeCommand,
         httpCode: HttpStatus.OK,
     })
-    async enableNode(@Param() uuid: EnableNodeRequestParamDto): Promise<EnableNodeResponseDto> {
+    async enableNode(
+        @Param() uuid: EnableNodeRequestParamDto,
+        @Req() request: Request,
+        @IpAddress() ip: string,
+        @UserAgent() userAgent: string,
+    ): Promise<EnableNodeResponseDto> {
         const res = await this.nodesService.enableNode(uuid.uuid);
+
+        await this.auditNodeOperation(request, {
+            action: 'node.enable',
+            resourceId: uuid.uuid,
+            resourceName: res.isOk ? res.response.name : null,
+            ip,
+            userAgent,
+            success: res.isOk,
+        });
+
         const data = errorHandler(res);
         return {
             response: data,
@@ -169,8 +208,23 @@ export class NodesController {
         command: DisableNodeCommand,
         httpCode: HttpStatus.OK,
     })
-    async disableNode(@Param() uuid: DisableNodeRequestParamDto): Promise<DisableNodeResponseDto> {
+    async disableNode(
+        @Param() uuid: DisableNodeRequestParamDto,
+        @Req() request: Request,
+        @IpAddress() ip: string,
+        @UserAgent() userAgent: string,
+    ): Promise<DisableNodeResponseDto> {
         const res = await this.nodesService.disableNode(uuid.uuid);
+
+        await this.auditNodeOperation(request, {
+            action: 'node.disable',
+            resourceId: uuid.uuid,
+            resourceName: res.isOk ? res.response.name : null,
+            ip,
+            userAgent,
+            success: res.isOk,
+        });
+
         const data = errorHandler(res);
         return {
             response: data,
@@ -186,8 +240,23 @@ export class NodesController {
         command: DeleteNodeCommand,
         httpCode: HttpStatus.OK,
     })
-    async deleteNode(@Param() uuid: DeleteNodeRequestParamDto): Promise<DeleteNodeResponseDto> {
+    async deleteNode(
+        @Param() uuid: DeleteNodeRequestParamDto,
+        @Req() request: Request,
+        @IpAddress() ip: string,
+        @UserAgent() userAgent: string,
+    ): Promise<DeleteNodeResponseDto> {
         const res = await this.nodesService.deleteNode(uuid.uuid);
+
+        await this.auditNodeOperation(request, {
+            action: 'node.delete',
+            resourceId: uuid.uuid,
+            resourceName: null,
+            ip,
+            userAgent,
+            success: res.isOk,
+        });
+
         const data = errorHandler(res);
         return {
             response: data,
@@ -203,8 +272,23 @@ export class NodesController {
         httpCode: HttpStatus.OK,
         apiBody: UpdateNodeRequestDto,
     })
-    async updateNode(@Body() body: UpdateNodeRequestDto): Promise<UpdateNodeResponseDto> {
+    async updateNode(
+        @Body() body: UpdateNodeRequestDto,
+        @Req() request: Request,
+        @IpAddress() ip: string,
+        @UserAgent() userAgent: string,
+    ): Promise<UpdateNodeResponseDto> {
         const res = await this.nodesService.updateNode(body);
+
+        await this.auditNodeOperation(request, {
+            action: 'node.update',
+            resourceId: res.isOk ? res.response.uuid : (body.uuid ?? null),
+            resourceName: res.isOk ? res.response.name : (body.name ?? null),
+            ip,
+            userAgent,
+            success: res.isOk,
+        });
+
         const data = errorHandler(res);
         return {
             response: data,
@@ -220,8 +304,23 @@ export class NodesController {
         command: RestartNodeCommand,
         httpCode: HttpStatus.OK,
     })
-    async restartNode(@Param() uuid: RestartNodeRequestDto): Promise<RestartNodeResponseDto> {
+    async restartNode(
+        @Param() uuid: RestartNodeRequestDto,
+        @Req() request: Request,
+        @IpAddress() ip: string,
+        @UserAgent() userAgent: string,
+    ): Promise<RestartNodeResponseDto> {
         const res = await this.nodesService.restartNode(uuid.uuid);
+
+        await this.auditNodeOperation(request, {
+            action: 'node.restart',
+            resourceId: uuid.uuid,
+            resourceName: null,
+            ip,
+            userAgent,
+            success: res.isOk,
+        });
+
         const data = errorHandler(res);
         return {
             response: data,
@@ -239,8 +338,21 @@ export class NodesController {
     })
     async resetNodeTraffic(
         @Param() uuid: ResetNodeTrafficRequestDto,
+        @Req() request: Request,
+        @IpAddress() ip: string,
+        @UserAgent() userAgent: string,
     ): Promise<ResetNodeTrafficResponseDto> {
         const res = await this.nodesService.resetNodeTraffic(uuid.uuid);
+
+        await this.auditNodeOperation(request, {
+            action: 'node.reset_traffic',
+            resourceId: uuid.uuid,
+            resourceName: null,
+            ip,
+            userAgent,
+            success: res.isOk,
+        });
+
         const data = errorHandler(res);
         return {
             response: data,
@@ -257,8 +369,21 @@ export class NodesController {
     })
     async restartAllNodes(
         @Body() { forceRestart }: RestartAllNodesRequestBodyDto,
+        @Req() request: Request,
+        @IpAddress() ip: string,
+        @UserAgent() userAgent: string,
     ): Promise<RestartAllNodesResponseDto> {
         const res = await this.nodesService.restartAllNodes(forceRestart);
+
+        await this.auditNodeOperation(request, {
+            action: 'node.restart_all',
+            resourceId: null,
+            resourceName: forceRestart ? 'force' : 'graceful',
+            ip,
+            userAgent,
+            success: res.isOk,
+        });
+
         const data = errorHandler(res);
         return {
             response: data,
@@ -274,8 +399,22 @@ export class NodesController {
         httpCode: HttpStatus.OK,
         apiBody: ReorderNodeRequestDto,
     })
-    async reorderNodes(@Body() body: ReorderNodeRequestDto): Promise<ReorderNodeResponseDto> {
+    async reorderNodes(
+        @Body() body: ReorderNodeRequestDto,
+        @Req() request: Request,
+        @IpAddress() ip: string,
+        @UserAgent() userAgent: string,
+    ): Promise<ReorderNodeResponseDto> {
         const result = await this.nodesService.reorderNodes(body);
+
+        await this.auditNodeOperation(request, {
+            action: 'node.reorder',
+            resourceId: null,
+            resourceName: null,
+            ip,
+            userAgent,
+            success: result.isOk,
+        });
 
         const data = errorHandler(result);
         return {
@@ -294,8 +433,20 @@ export class NodesController {
     })
     async profileModification(
         @Body() body: ProfileModificationRequestDto,
+        @Req() request: Request,
+        @IpAddress() ip: string,
+        @UserAgent() userAgent: string,
     ): Promise<ProfileModificationResponseDto> {
         const result = await this.nodesService.profileModification(body);
+
+        await this.auditNodeOperation(request, {
+            action: 'node.profile_modification',
+            resourceId: null,
+            resourceName: body.configProfile?.activeConfigProfileUuid ?? null,
+            ip,
+            userAgent,
+            success: result.isOk,
+        });
 
         const data = errorHandler(result);
         return {
@@ -314,8 +465,20 @@ export class NodesController {
     })
     async bulkNodesActions(
         @Body() body: BulkNodesActionsRequestDto,
+        @Req() request: Request,
+        @IpAddress() ip: string,
+        @UserAgent() userAgent: string,
     ): Promise<BulkNodesActionsResponseDto> {
         const result = await this.nodesService.bulkNodesActions(body);
+
+        await this.auditNodeOperation(request, {
+            action: 'node.bulk_actions',
+            resourceId: null,
+            resourceName: body.action,
+            ip,
+            userAgent,
+            success: result.isOk,
+        });
 
         const data = errorHandler(result);
         return {
@@ -334,12 +497,58 @@ export class NodesController {
     })
     async bulkNodesUpdate(
         @Body() body: BulkNodesUpdateRequestDto,
+        @Req() request: Request,
+        @IpAddress() ip: string,
+        @UserAgent() userAgent: string,
     ): Promise<BulkNodesUpdateResponseDto> {
         const result = await this.nodesService.bulkNodesUpdate(body);
+
+        await this.auditNodeOperation(request, {
+            action: 'node.bulk_update',
+            resourceId: null,
+            resourceName: null,
+            ip,
+            userAgent,
+            success: result.isOk,
+        });
 
         const data = errorHandler(result);
         return {
             response: data,
         };
+    }
+
+    private async auditNodeOperation(
+        request: Request,
+        operation: {
+            action: string;
+            resourceId: string | null;
+            resourceName: string | null;
+            ip: string;
+            userAgent: string;
+            success: boolean;
+        },
+    ): Promise<void> {
+        const actor = request.user as IJWTAuthPayload | undefined;
+
+        await this.auditLogsService.createLog({
+            actorType: actor?.role === ROLE.API ? 'system' : 'admin',
+            actorId: actor?.uuid,
+            actorName: actor?.username ?? (actor?.role === ROLE.API ? 'API token' : null),
+            action: operation.action,
+            resourceType: 'node',
+            resourceId: operation.resourceId,
+            ip: operation.ip,
+            userAgent: operation.userAgent,
+            result: operation.success ? 'success' : 'failed',
+            message: operation.success
+                ? `${operation.action} succeeded.`
+                : `${operation.action} failed.`,
+            metadata: operation.resourceName
+                ? {
+                      nodeName: operation.resourceName,
+                  }
+                : undefined,
+        });
     }
 }

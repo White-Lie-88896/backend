@@ -38,6 +38,8 @@ import { GetTemplateNameQuery } from '@modules/external-squads/queries/get-templ
 import { ISRRContext } from '@modules/subscription-response-rules/interfaces';
 import { UserEntity } from '@modules/users/entities/user.entity';
 import { GetFullUserResponseModel } from '@modules/users/models';
+import { AuditLogsService } from '@modules/audit-logs';
+import { EgressRulesService } from '@modules/egress-rules/egress-rules.service';
 
 import { UsersQueuesService } from '@queue/_users/users-queues.service';
 
@@ -69,6 +71,8 @@ export class SubscriptionService {
         private readonly xrayGeneratorService: XrayGeneratorService,
         private readonly usersQueuesService: UsersQueuesService,
         private readonly srrMatcher: ResponseRulesMatcherService,
+        private readonly auditLogsService: AuditLogsService,
+        private readonly egressRulesService: EgressRulesService,
     ) {
         this.subPublicDomain = this.configService.getOrThrow<string>('SUB_PUBLIC_DOMAIN');
     }
@@ -79,26 +83,11 @@ export class SubscriptionService {
     ): Promise<
         SubscriptionNotFoundResponse | SubscriptionRawResponse | SubscriptionWithConfigResponse
     > {
+        let user: UserEntity | undefined;
         try {
             const { userAgent, hwidHeaders, matchedResponseType } = srrContext;
 
-            if (matchedResponseType === 'BROWSER') {
-                const subscriptionInfo = await this.getSubscriptionInfo({
-                    searchBy: {
-                        uniqueFieldKey: 'shortUuid',
-                        uniqueField: shortUuid,
-                    },
-                    authenticated: false,
-                });
-
-                if (!subscriptionInfo.isOk) {
-                    return new SubscriptionNotFoundResponse();
-                }
-
-                return subscriptionInfo.response;
-            }
-
-            const user = await this.queryBus.execute(
+            const userResult = await this.queryBus.execute(
                 new GetUserByUniqueFieldQuery(
                     {
                         shortUuid,
@@ -109,12 +98,51 @@ export class SubscriptionService {
                 ),
             );
 
-            if (!user.isOk) {
+            if (!userResult.isOk) {
+                await this.logSubscriptionAccess({
+                    shortUuid,
+                    ip: srrContext.ip,
+                    userAgent,
+                    result: 'failed',
+                    message: 'Subscription not found: invalid token.',
+                });
                 return new SubscriptionNotFoundResponse();
             }
 
+            user = userResult.response;
+
+            if (matchedResponseType === 'BROWSER') {
+                const subscriptionInfo = await this.getSubscriptionInfo({
+                    userEntity: user,
+                    authenticated: false,
+                });
+
+                if (!subscriptionInfo.isOk) {
+                    await this.logSubscriptionAccess({
+                        shortUuid,
+                        user,
+                        ip: srrContext.ip,
+                        userAgent,
+                        result: 'failed',
+                        message: 'Subscription info page access failed.',
+                    });
+                    return new SubscriptionNotFoundResponse();
+                }
+
+                await this.logSubscriptionAccess({
+                    shortUuid,
+                    user,
+                    ip: srrContext.ip,
+                    userAgent,
+                    result: 'success',
+                    message: 'Subscription info page accessed successfully.',
+                });
+
+                return subscriptionInfo.response;
+            }
+
             if (!srrContext.overrideTemplateName) {
-                if (user.response.externalSquadUuid) {
+                if (user.externalSquadUuid) {
                     let templateTypeMatcher = matchedResponseType as TSubscriptionTemplateType;
 
                     if (matchedResponseType === 'XRAY_BASE64') {
@@ -123,10 +151,7 @@ export class SubscriptionService {
                     }
 
                     const templateName = await this.queryBus.execute(
-                        new GetTemplateNameQuery(
-                            user.response.externalSquadUuid,
-                            templateTypeMatcher,
-                        ),
+                        new GetTemplateNameQuery(user.externalSquadUuid, templateTypeMatcher),
                     );
 
                     if (templateName.isOk) {
@@ -138,7 +163,7 @@ export class SubscriptionService {
             const { subscriptionSettings: patchedSubscriptionSettings, hostsOverrides } =
                 await this.applyMaybeExternalSquadOverrides(
                     srrContext.subscriptionSettings,
-                    user.response.externalSquadUuid,
+                    user.externalSquadUuid,
                 );
 
             srrContext.subscriptionSettings = patchedSubscriptionSettings;
@@ -147,7 +172,7 @@ export class SubscriptionService {
 
             if (subscriptionSettings.hwidSettings.enabled) {
                 const isAllowed = await this.checkHwidDeviceLimit(
-                    user.response,
+                    user,
                     hwidHeaders,
                     subscriptionSettings.hwidSettings,
                 );
@@ -155,7 +180,7 @@ export class SubscriptionService {
                 if (isAllowed.isOk && !isAllowed.response.isSubscriptionAllowed) {
                     const response = new SubscriptionWithConfigResponse({
                         headers: await this.getUserProfileHeadersInfo(
-                            user.response,
+                            user,
                             /^Happ\//.test(userAgent),
                             subscriptionSettings,
                         ),
@@ -170,7 +195,7 @@ export class SubscriptionService {
                         response.headers.announce = `base64:${Buffer.from(
                             TemplateEngine.formatWithUser(
                                 subscriptionSettings.hwidSettings.maxDevicesAnnounce,
-                                user.response,
+                                user,
                                 subscriptionSettings,
                                 this.subPublicDomain,
                             ),
@@ -185,7 +210,7 @@ export class SubscriptionService {
                         const { subscription, contentType } =
                             await this.renderTemplatesService.generateSubscription({
                                 srrContext,
-                                user: user.response,
+                                user: user,
                                 hosts: [],
                                 fallbackOptions: {
                                     showHwidMaxDeviceRemarks: isAllowed.response.maxDeviceReached,
@@ -212,10 +237,25 @@ export class SubscriptionService {
 
                     response.headers['x-hwid-limit'] = 'true'; // v2rayTUN
 
+                    let blockReason = 'HWID limit reached.';
+                    if (isAllowed.response.hwidNotSupported) {
+                        blockReason = 'HWID not supported.';
+                    }
+
+                    await this.logSubscriptionAccess({
+                        shortUuid,
+                        user,
+                        ip: srrContext.ip,
+                        userAgent,
+                        result: 'blocked',
+                        message: `Subscription access blocked: ${blockReason}`,
+                        hwid: hwidHeaders?.hwid,
+                    });
+
                     return response;
                 }
             } else {
-                await this.checkAndUpsertHwidUserDevice(user.response, hwidHeaders);
+                await this.checkAndUpsertHwidUserDevice(user, hwidHeaders);
             }
 
             if (
@@ -230,7 +270,7 @@ export class SubscriptionService {
 
             const hosts = await this.queryBus.execute(
                 new GetHostsForUserQuery(
-                    user.response.tId,
+                    user.tId,
                     false,
                     srrContext.matchedResponseType === 'XRAY_JSON' ||
                         srrContext.matchedResponseType === 'MIHOMO',
@@ -238,6 +278,14 @@ export class SubscriptionService {
             );
 
             if (!hosts.isOk) {
+                await this.logSubscriptionAccess({
+                    shortUuid,
+                    user,
+                    ip: srrContext.ip,
+                    userAgent,
+                    result: 'failed',
+                    message: 'Subscription failed: hosts lookup error.',
+                });
                 return new SubscriptionNotFoundResponse();
             }
 
@@ -245,22 +293,31 @@ export class SubscriptionService {
                 hosts.response = _.shuffle(hosts.response);
             }
 
-            await this.updateAndReportSubscriptionRequest(
-                user.response.uuid,
-                userAgent,
-                srrContext.ip,
-            );
+            await this.updateAndReportSubscriptionRequest(user.uuid, userAgent, srrContext.ip);
 
             const subscription = await this.renderTemplatesService.generateSubscription({
                 srrContext,
-                user: user.response,
+                user: user,
                 hosts: hosts.response,
                 hostsOverrides,
+                additionalProxies: await this.egressRulesService.getDistributedProxyConfigs(
+                    user.tId,
+                ),
+            });
+
+            await this.logSubscriptionAccess({
+                shortUuid,
+                user,
+                ip: srrContext.ip,
+                userAgent,
+                result: 'success',
+                message: `Subscription config accessed successfully (Type: ${srrContext.matchedResponseType}).`,
+                hwid: hwidHeaders?.hwid,
             });
 
             return new SubscriptionWithConfigResponse({
                 headers: await this.getUserProfileHeadersInfo(
-                    user.response,
+                    user,
                     /^Happ\//.test(userAgent),
                     subscriptionSettings,
                 ),
@@ -269,6 +326,14 @@ export class SubscriptionService {
             });
         } catch (error) {
             this.logger.error(error);
+            await this.logSubscriptionAccess({
+                shortUuid,
+                user,
+                ip: srrContext.ip,
+                userAgent: srrContext.userAgent,
+                result: 'failed',
+                message: `Subscription access error: ${error instanceof Error ? error.message : String(error)}`,
+            });
             return new SubscriptionNotFoundResponse();
         }
     }
@@ -280,6 +345,7 @@ export class SubscriptionService {
         hwidHeaders: HwidHeaders | null,
         requestIp?: string,
     ): Promise<TResult<RawSubscriptionWithHostsResponse>> {
+        let user: UserEntity | undefined;
         try {
             const userResult = await this.queryBus.execute(
                 new GetUserByUniqueFieldQuery(
@@ -292,15 +358,30 @@ export class SubscriptionService {
                 ),
             );
             if (!userResult.isOk) {
+                await this.logSubscriptionAccess({
+                    shortUuid,
+                    ip: requestIp,
+                    userAgent,
+                    result: 'failed',
+                    message: 'Raw subscription not found: invalid token.',
+                });
                 return fail(ERRORS.USER_NOT_FOUND);
             }
-            const user = userResult.response;
+            user = userResult.response;
 
             const settingEntity = await this.queryBus.execute(
                 new GetCachedSubscriptionSettingsQuery(),
             );
 
             if (!settingEntity) {
+                await this.logSubscriptionAccess({
+                    shortUuid,
+                    user,
+                    ip: requestIp,
+                    userAgent,
+                    result: 'failed',
+                    message: 'Subscription settings not found.',
+                });
                 return fail(ERRORS.SUBSCRIPTION_SETTINGS_NOT_FOUND);
             }
 
@@ -344,6 +425,21 @@ export class SubscriptionService {
                     }
 
                     isHwidLimited = true;
+
+                    let blockReason = 'HWID limit reached.';
+                    if (isAllowed.response.hwidNotSupported) {
+                        blockReason = 'HWID not supported.';
+                    }
+
+                    await this.logSubscriptionAccess({
+                        shortUuid,
+                        user,
+                        ip: requestIp,
+                        userAgent,
+                        result: 'blocked',
+                        message: `Raw subscription access blocked: ${blockReason}`,
+                        hwid: hwidHeaders?.hwid,
+                    });
                 }
 
                 headers['x-hwid-limit'] = 'true'; // v2rayTUN
@@ -358,6 +454,14 @@ export class SubscriptionService {
             );
 
             if (!hosts.isOk) {
+                await this.logSubscriptionAccess({
+                    shortUuid,
+                    user,
+                    ip: requestIp,
+                    userAgent,
+                    result: 'failed',
+                    message: 'Raw subscription failed: hosts lookup error.',
+                });
                 return fail(ERRORS.GET_ALL_HOSTS_ERROR);
             }
 
@@ -375,6 +479,19 @@ export class SubscriptionService {
                     user: user,
                     hosts: hosts.response,
                     hostsOverrides: patchedHostsOverrides,
+                    additionalProxies: await this.egressRulesService.getDistributedProxyConfigs(
+                        user.tId,
+                    ),
+                });
+
+                await this.logSubscriptionAccess({
+                    shortUuid,
+                    user,
+                    ip: requestIp,
+                    userAgent,
+                    result: 'success',
+                    message: 'Raw subscription config accessed successfully.',
+                    hwid: hwidHeaders?.hwid,
                 });
             }
 
@@ -396,6 +513,14 @@ export class SubscriptionService {
             );
         } catch (error) {
             this.logger.error(error);
+            await this.logSubscriptionAccess({
+                shortUuid,
+                user,
+                ip: requestIp,
+                userAgent,
+                result: 'failed',
+                message: `Raw subscription access error: ${error instanceof Error ? error.message : String(error)}`,
+            });
             return fail(ERRORS.INTERNAL_SERVER_ERROR);
         }
     }
@@ -475,6 +600,9 @@ export class SubscriptionService {
                     user: userEntity,
                     hostsOverrides,
                 });
+                formattedHosts.push(
+                    ...(await this.egressRulesService.getDistributedProxyConfigs(userEntity.tId)),
+                );
 
                 xrayLinks = this.xrayGeneratorService.generateLinks(formattedHosts, false);
             }
@@ -1016,5 +1144,40 @@ export class SubscriptionService {
             this.logger.error(`Error getting subscription info: ${error}`);
             return fail(ERRORS.INTERNAL_SERVER_ERROR);
         }
+    }
+
+    private maskToken(token: string): string {
+        if (!token) return '';
+        if (token.length <= 4) return '***';
+        return `${token.slice(0, 3)}***${token.slice(-3)}`;
+    }
+
+    private async logSubscriptionAccess(params: {
+        shortUuid: string;
+        user?: UserEntity;
+        ip?: string;
+        userAgent?: string;
+        result: 'success' | 'failed' | 'blocked';
+        message: string;
+        hwid?: string | null;
+    }): Promise<void> {
+        const { shortUuid, user, ip, userAgent, result, message, hwid } = params;
+        await this.auditLogsService.createLog({
+            actorType: 'user',
+            actorId: user?.uuid ?? null,
+            actorName: user?.username ?? null,
+            action: 'subscription.access',
+            resourceType: 'subscription',
+            resourceId: user?.uuid ?? null,
+            ip: ip ?? null,
+            userAgent: userAgent ?? null,
+            result,
+            message,
+            metadata: {
+                token: this.maskToken(shortUuid),
+                hwid: hwid ?? null,
+                userAgent: userAgent ?? null,
+            },
+        });
     }
 }

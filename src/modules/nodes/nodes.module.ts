@@ -1,6 +1,8 @@
 import { CqrsModule } from '@nestjs/cqrs';
 import { Module } from '@nestjs/common';
 
+import { AuditLogsModule } from '@modules/audit-logs';
+
 import { NodesSystemCacheService } from './nodes-system-cache.service';
 import { NodesRepository } from './repositories/nodes.repository';
 import { NodesController } from './nodes.controller';
@@ -11,7 +13,7 @@ import { QUERIES } from './queries';
 import { EVENTS } from './events';
 
 @Module({
-    imports: [CqrsModule],
+    imports: [CqrsModule, AuditLogsModule],
     controllers: [NodesController],
     providers: [
         NodesRepository,

@@ -69,6 +69,7 @@ export namespace UpdateNodeCommand {
                 .max(10, 'Maximum 10 tags'),
         ),
         activePluginUuid: z.optional(z.nullable(z.string().uuid())),
+        proxyChainConfig: z.optional(z.nullable(z.record(z.unknown()))),
     });
 
     export type Request = z.infer<typeof RequestSchema>;

@@ -28,6 +28,7 @@ import {
     EncryptHappCryptoLinkCommand,
     GenerateX25519Command,
     GetBandwidthStatsCommand,
+    GetDiagnosticsCommand,
     GetMetadataCommand,
     GetNodesMetricsCommand,
     GetNodesStatisticsCommand,
@@ -42,6 +43,7 @@ import { ROLE } from '@libs/contracts/constants';
 import {
     GetBandwidthStatsRequestQueryDto,
     GetBandwidthStatsResponseDto,
+    GetDiagnosticsResponseDto,
     GetNodesMetricsResponseDto,
     GetNodesStatisticsResponseDto,
     GetRemnawaveHealthResponseDto,
@@ -77,6 +79,24 @@ export class SystemController {
     })
     async getMetadata(): Promise<GetMetadataResponseDto> {
         const result = await this.systemService.getMetadata();
+
+        const data = errorHandler(result);
+        return {
+            response: data,
+        };
+    }
+
+    @ApiResponse({
+        status: 200,
+        description: 'Returns system diagnostics',
+        type: GetDiagnosticsResponseDto,
+    })
+    @Endpoint({
+        command: GetDiagnosticsCommand,
+        httpCode: HttpStatus.OK,
+    })
+    async getDiagnostics(): Promise<GetDiagnosticsResponseDto> {
+        const result = await this.systemService.getDiagnostics();
 
         const data = errorHandler(result);
         return {

@@ -9,11 +9,20 @@ import { SubscriptionResponseRulesModule } from '@modules/subscription-response-
 import { ResponseRulesMiddleware } from '@modules/subscription-response-rules/middleware/response-rules.middleware';
 import { SubscriptionTemplateModule } from '@modules/subscription-template/subscription-template.module';
 
+import { AuditLogsModule } from '@modules/audit-logs';
+import { EgressRulesModule } from '@modules/egress-rules/egress-rules.module';
+
 import { SubscriptionController, SubscriptionsController } from './controllers';
 import { SubscriptionService } from './subscription.service';
 
 @Module({
-    imports: [CqrsModule, SubscriptionTemplateModule, SubscriptionResponseRulesModule],
+    imports: [
+        CqrsModule,
+        SubscriptionTemplateModule,
+        SubscriptionResponseRulesModule,
+        AuditLogsModule,
+        EgressRulesModule,
+    ],
     controllers: [SubscriptionController, SubscriptionsController],
     providers: [SubscriptionService],
     exports: [],

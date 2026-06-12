@@ -1,0 +1,295 @@
+name: Cloud Build and Deploy to DC1
+
+on:
+  workflow_dispatch:
+    inputs:
+      plan_only:
+        description: 'Only print the plan. Keep true for the first learning run.'
+        required: true
+        type: boolean
+        default: true
+      image_tag:
+        description: 'Optional Docker tag, for example 2.7.4-cloud-v1. Empty means auto-generate.'
+        required: false
+        type: string
+      image_repository:
+        description: 'Target image repository.'
+        required: true
+        type: string
+        default: 'ghcr.io/white-lie-88896/backend'
+      frontend_repository:
+        description: 'Frontend repository to checkout.'
+        required: true
+        type: string
+        default: 'White-Lie-88896/frontend'
+      frontend_ref:
+        description: 'Frontend branch, tag, or commit.'
+        required: true
+        type: string
+        default: 'custom'
+      run_migrations:
+        description: 'Run Prisma migrations before switching the backend container.'
+        required: true
+        type: boolean
+        default: true
+      skip_frontend_typecheck:
+        description: 'Skip npm run typecheck in the frontend.'
+        required: true
+        type: boolean
+        default: false
+      skip_smoke_test:
+        description: 'Skip local Docker image smoke test before push.'
+        required: true
+        type: boolean
+        default: false
+      remote_app_dir:
+        description: 'Remnawave directory on DC1.'
+        required: true
+        type: string
+        default: '/opt/remnawave'
+      remote_compose_file:
+        description: 'Docker compose file on DC1.'
+        required: true
+        type: string
+        default: '/opt/remnawave/docker-compose.yml'
+      service_name:
+        description: 'Backend service name in docker compose.'
+        required: true
+        type: string
+        default: 'remnawave'
+      network_name:
+        description: 'Docker network used for migrations.'
+        required: true
+        type: string
+        default: 'remnawave-network'
+      panel_url:
+        description: 'Panel URL checked after the service becomes healthy.'
+        required: false
+        type: string
+        default: 'https://panel.5555557.xyz'
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: remnawave-cloud-deploy
+  cancel-in-progress: false
+
+jobs:
+  cloud-build-deploy:
+    name: Build in GitHub Actions and deploy pulled image
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout backend
+        uses: actions/checkout@v4
+        with:
+          path: remnawave-backend
+
+      - name: Checkout frontend
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.frontend_repository }}
+          ref: ${{ inputs.frontend_ref }}
+          path: remnawave-frontend
+          token: ${{ secrets.FRONTEND_REPO_TOKEN || github.token }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            remnawave-backend/package-lock.json
+            remnawave-frontend/package-lock.json
+
+      - name: Prepare image metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(node -p "require('./remnawave-backend/package.json').version")"
+          backend_commit="$(git -C remnawave-backend rev-parse --short HEAD)"
+          frontend_commit="$(git -C remnawave-frontend rev-parse --short HEAD)"
+          backend_branch="${GITHUB_REF_NAME}"
+          build_time="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          image_repository="$(printf '%s' '${{ inputs.image_repository }}' | tr '[:upper:]' '[:lower:]')"
+          image_tag='${{ inputs.image_tag }}'
+
+          if [ -z "$image_tag" ]; then
+            image_tag="${version}-cloud-${GITHUB_RUN_NUMBER}-b${backend_commit}-f${frontend_commit}"
+          fi
+
+          image_tag="$(printf '%s' "$image_tag" | sed 's/[^A-Za-z0-9_.-]/-/g')"
+          image="${image_repository}:${image_tag}"
+
+          {
+            echo "version=$version"
+            echo "backend_commit=$backend_commit"
+            echo "frontend_commit=$frontend_commit"
+            echo "backend_branch=$backend_branch"
+            echo "build_time=$build_time"
+            echo "image_repository=$image_repository"
+            echo "image_tag=$image_tag"
+            echo "image=$image"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Cloud build plan"
+            echo ""
+            echo "- Image: \`$image\`"
+            echo "- Backend ref: \`${GITHUB_REF_NAME}\` / \`$backend_commit\`"
+            echo "- Frontend ref: \`${{ inputs.frontend_ref }}\` / \`$frontend_commit\`"
+            echo "- Plan only: \`${{ inputs.plan_only }}\`"
+            echo "- Run migrations: \`${{ inputs.run_migrations }}\`"
+            echo "- Remote compose: \`${{ inputs.remote_compose_file }}\`"
+            echo "- Service: \`${{ inputs.service_name }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Stop after plan
+        if: ${{ inputs.plan_only }}
+        shell: bash
+        run: |
+          echo "Plan only is enabled. No Docker build, push, SSH, or production change was performed."
+
+      - name: Install frontend dependencies
+        if: ${{ !inputs.plan_only }}
+        working-directory: remnawave-frontend
+        run: npm ci
+
+      - name: Typecheck frontend
+        if: ${{ !inputs.plan_only && !inputs.skip_frontend_typecheck }}
+        working-directory: remnawave-frontend
+        run: npm run typecheck
+
+      - name: Build frontend
+        if: ${{ !inputs.plan_only }}
+        working-directory: remnawave-frontend
+        run: npm run cb
+
+      - name: Prepare backend Docker context
+        if: ${{ !inputs.plan_only }}
+        shell: pwsh
+        run: ./remnawave-backend/prepare-custom-build.ps1
+
+      - name: Login to GHCR for push
+        if: ${{ !inputs.plan_only }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build image in cloud
+        if: ${{ !inputs.plan_only }}
+        shell: bash
+        env:
+          DOCKER_BUILDKIT: '1'
+          IMAGE: ${{ steps.meta.outputs.image }}
+        run: |
+          set -euo pipefail
+
+          docker build \
+            -f remnawave-backend/Dockerfile.custom \
+            -t "$IMAGE" \
+            --build-arg "BRANCH=${{ steps.meta.outputs.backend_branch }}" \
+            --build-arg "__RW_METADATA_VERSION=${{ steps.meta.outputs.image_tag }}" \
+            --build-arg "__RW_METADATA_GIT_BACKEND_COMMIT=${{ steps.meta.outputs.backend_commit }}" \
+            --build-arg "__RW_METADATA_GIT_FRONTEND_COMMIT=${{ steps.meta.outputs.frontend_commit }}" \
+            --build-arg "__RW_METADATA_GIT_BRANCH=${{ steps.meta.outputs.backend_branch }}" \
+            --build-arg "__RW_METADATA_BUILD_TIME=${{ steps.meta.outputs.build_time }}" \
+            --build-arg "__RW_METADATA_BUILD_NUMBER=${GITHUB_RUN_NUMBER}" \
+            remnawave-backend
+
+      - name: Smoke test image
+        if: ${{ !inputs.plan_only && !inputs.skip_smoke_test }}
+        shell: bash
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+        run: |
+          set -euo pipefail
+
+          docker run --rm \
+            --entrypoint /bin/sh \
+            "$IMAGE" \
+            -c 'test -f /opt/app/dist/src/main.js && test -f /opt/app/frontend/index.html && grep -q "/assets/index-" /opt/app/frontend/index.html'
+
+      - name: Push image to GHCR
+        if: ${{ !inputs.plan_only }}
+        shell: bash
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+        run: docker push "$IMAGE"
+
+      - name: Configure SSH to DC1
+        if: ${{ !inputs.plan_only }}
+        shell: bash
+        env:
+          DC1_HOST: ${{ secrets.DC1_HOST }}
+          DC1_PORT: ${{ secrets.DC1_PORT || '22' }}
+          DC1_SSH_KEY: ${{ secrets.DC1_SSH_KEY }}
+        run: |
+          set -euo pipefail
+
+          : "${DC1_HOST:?Set the DC1_HOST repository secret.}"
+          : "${DC1_SSH_KEY:?Set the DC1_SSH_KEY repository secret.}"
+
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$DC1_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -p "${DC1_PORT:-22}" "$DC1_HOST" >> ~/.ssh/known_hosts
+
+      - name: Login DC1 to GHCR for pull
+        if: ${{ !inputs.plan_only }}
+        shell: bash
+        env:
+          DC1_HOST: ${{ secrets.DC1_HOST }}
+          DC1_USER: ${{ secrets.DC1_USER || 'root' }}
+          DC1_PORT: ${{ secrets.DC1_PORT || '22' }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME || github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GHCR_TOKEN:-}" ]; then
+            echo "GHCR_TOKEN is empty. Assuming the image is public or DC1 is already logged in."
+            exit 0
+          fi
+
+          target="${DC1_USER:-root}@${DC1_HOST}"
+          printf '%s' "$GHCR_TOKEN" | ssh -p "${DC1_PORT:-22}" "$target" "docker login ghcr.io -u \"${GHCR_USERNAME}\" --password-stdin"
+
+      - name: Deploy pulled image on DC1
+        if: ${{ !inputs.plan_only }}
+        shell: bash
+        env:
+          DC1_HOST: ${{ secrets.DC1_HOST }}
+          DC1_USER: ${{ secrets.DC1_USER || 'root' }}
+          DC1_PORT: ${{ secrets.DC1_PORT || '22' }}
+          IMAGE: ${{ steps.meta.outputs.image }}
+          REMOTE_APP_DIR: ${{ inputs.remote_app_dir }}
+          REMOTE_COMPOSE_FILE: ${{ inputs.remote_compose_file }}
+          SERVICE_NAME: ${{ inputs.service_name }}
+          NETWORK_NAME: ${{ inputs.network_name }}
+          PANEL_URL: ${{ inputs.panel_url }}
+          RUN_MIGRATIONS: ${{ inputs.run_migrations }}
+        run: |
+          set -euo pipefail
+
+          target="${DC1_USER:-root}@${DC1_HOST}"
+          remote_args=(
+            "$IMAGE"
+            "$REMOTE_APP_DIR"
+            "$REMOTE_COMPOSE_FILE"
+            "$SERVICE_NAME"
+            "$NETWORK_NAME"
+            "$PANEL_URL"
+            "$RUN_MIGRATIONS"
+          )
+
+          printf -v quoted_args '%q ' "${remote_args[@]}"
+          ssh -p "${DC1_PORT:-22}" "$target" "bash -s -- $quoted_args" < remnawave-backend/scripts/deploy-remnawave-pulled-image.sh

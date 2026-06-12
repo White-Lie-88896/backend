@@ -2,6 +2,7 @@ import { ExternalSquadEntity } from '@modules/external-squads/entities/external-
 import { HostWithRawInbound } from '@modules/hosts/entities/host-with-inbound-tag.entity';
 import { ISRRContext } from '@modules/subscription-response-rules/interfaces';
 import { UserEntity } from '@modules/users/entities/user.entity';
+import { ResolvedProxyConfig } from '../resolve-proxy/interfaces';
 
 export interface IGenerateSubscription {
     srrContext: ISRRContext;
@@ -12,4 +13,5 @@ export interface IGenerateSubscription {
         showHwidMaxDeviceRemarks?: boolean;
         showHwidNotSupportedRemarks?: boolean;
     };
+    additionalProxies?: ResolvedProxyConfig[];
 }

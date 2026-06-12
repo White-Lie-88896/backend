@@ -48,6 +48,8 @@ export class InfraBillingNodesNotificationsTask {
                             providerName: node.providerName,
                             loginUrl: node.loginUrl ?? 'https://docs.rw',
                             nextBillingAt: node.nextBillingAt,
+                            billingAmount: node.billingAmount,
+                            billingCurrency: node.billingCurrency,
                         },
                         EVENTS.CRM[node.notificationType],
                     ),

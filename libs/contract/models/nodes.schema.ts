@@ -55,4 +55,5 @@ export const NodesSchema = z.object({
     ),
     xrayUptime: z.number(),
     usersOnline: z.number(),
+    proxyChainConfig: z.nullable(z.record(z.unknown())).optional(),
 });

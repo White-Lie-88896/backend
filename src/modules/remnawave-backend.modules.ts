@@ -20,6 +20,9 @@ import { InternalSquadModule } from './internal-squads/internal-squad.module';
 import { InfraBillingModule } from './infra-billing/infra-billing.module';
 import { SubscriptionModule } from './subscription/subscription.module';
 import { ApiTokensModule } from './api-tokens/api-tokens.module';
+import { AuditLogsModule } from './audit-logs/audit-logs.module';
+import { EgressRulesModule } from './egress-rules/egress-rules.module';
+import { ProxyAccessAuditModule } from './proxy-access-audit/proxy-access-audit.module';
 import { IpControlModule } from './ip-control/ip-control.module';
 import { MetadataModule } from './metadata/metadata.module';
 import { KeygenModule } from './keygen/keygen.module';
@@ -41,6 +44,9 @@ import { AuthModule } from './auth/auth.module';
         ConditionalModule.registerWhen(SubscriptionResponseRulesModule, () => isRestApi()),
         ConditionalModule.registerWhen(SubscriptionModule, () => isRestApi()),
         ConditionalModule.registerWhen(ApiTokensModule, () => isRestApi()),
+        ConditionalModule.registerWhen(AuditLogsModule, () => isRestApi()),
+        ConditionalModule.registerWhen(EgressRulesModule, () => isRestApi()),
+        ConditionalModule.registerWhen(ProxyAccessAuditModule, () => isRestApi()),
         ConfigProfileModule,
         InternalSquadModule,
         ExternalSquadModule,

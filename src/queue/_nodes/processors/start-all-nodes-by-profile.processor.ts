@@ -6,6 +6,8 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { CommandBus, QueryBus } from '@nestjs/cqrs';
 import { Logger, Scope } from '@nestjs/common';
 
+import { injectProxyChain } from '@common/helpers/proxy-chain/proxy-chain-injector';
+import { XRayConfig } from '@common/helpers/xray-config/xray-config.validator';
 import { AxiosService } from '@common/axios/axios.service';
 import { RawCacheService } from '@common/raw-cache';
 import { CACHE_KEYS, CACHE_KEYS_TTL } from '@libs/contracts/constants';
@@ -13,6 +15,7 @@ import { CACHE_KEYS, CACHE_KEYS_TTL } from '@libs/contracts/constants';
 import { GetPreparedConfigWithUsersQuery } from '@modules/users/queries/get-prepared-config-with-users/get-prepared-config-with-users.query';
 import { FindNodesByCriteriaQuery } from '@modules/nodes/queries/find-nodes-by-criteria';
 import { GetAllPluginsQuery } from '@modules/node-plugins/queries/get-all-plugins';
+import { EgressRulesService } from '@modules/egress-rules/egress-rules.service';
 import { ConfigProfileInboundEntity } from '@modules/config-profiles/entities';
 import { UpdateNodeCommand } from '@modules/nodes/commands/update-node';
 import { NodePluginEntity } from '@modules/node-plugins/entities';
@@ -42,6 +45,7 @@ export class StartAllNodesByProfileQueueProcessor extends WorkerHost {
         private readonly queryBus: QueryBus,
         private readonly commandBus: CommandBus,
         private readonly rawCacheService: RawCacheService,
+        private readonly egressRulesService: EgressRulesService,
     ) {
         super();
         this.CONCURRENCY = 20;
@@ -276,19 +280,41 @@ export class StartAllNodesByProfileQueueProcessor extends WorkerHost {
                     (inbound) => activeNodeInboundsTags.has(inbound.tag),
                 );
 
+                const nodeXrayConfig = {
+                    ...config.response.config,
+                    inbounds: config.response.config.inbounds!.filter(
+                        (inbound) =>
+                            activeNodeInboundsTags.has(inbound.tag!) ||
+                            this.isUnsecureInbound(inbound.protocol),
+                    ),
+                    routing: config.response.config.routing
+                        ? {
+                              ...config.response.config.routing,
+                              rules: config.response.config.routing.rules
+                                  ? [...config.response.config.routing.rules]
+                                  : [],
+                          }
+                        : {},
+                    outbounds: config.response.config.outbounds
+                        ? [...config.response.config.outbounds]
+                        : [],
+                };
+
+                const injectedNodeXrayConfig =
+                    await this.egressRulesService.injectEgressRulesIntoConfig(nodeXrayConfig);
+                const finalNodeXrayConfig = injectProxyChain(
+                    injectedNodeXrayConfig,
+                    node.proxyChainConfig,
+                );
+                const updatedXRayConfig = new XRayConfig(finalNodeXrayConfig);
+                const updatedHash = updatedXRayConfig.getConfigHash();
+
                 const startXrayResponse = await this.axios.startXray(
                     {
-                        xrayConfig: {
-                            ...config.response.config,
-                            inbounds: config.response.config.inbounds!.filter(
-                                (inbound) =>
-                                    activeNodeInboundsTags.has(inbound.tag!) ||
-                                    this.isUnsecureInbound(inbound.protocol),
-                            ),
-                        } as unknown as Record<string, unknown>,
+                        xrayConfig: finalNodeXrayConfig as unknown as Record<string, unknown>,
                         internals: {
                             hashes: {
-                                emptyConfig: config.response.hashesPayload.emptyConfig,
+                                emptyConfig: updatedHash,
                                 inbounds: filteredInboundsHashes,
                             },
                             forceRestart: payload.force ?? false,

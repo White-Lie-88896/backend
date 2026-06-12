@@ -30,7 +30,8 @@ export class RenderTemplatesService {
         contentType: string;
         subscription: string;
     }> {
-        const { srrContext, user, hosts, hostsOverrides, fallbackOptions } = params;
+        const { srrContext, user, hosts, hostsOverrides, fallbackOptions, additionalProxies } =
+            params;
 
         const formattedHosts = await this.resolveProxyConfigService.resolveProxyConfig({
             subscriptionSettings: srrContext.subscriptionSettings,
@@ -39,6 +40,7 @@ export class RenderTemplatesService {
             hostsOverrides,
             fallbackOptions,
         });
+        formattedHosts.push(...(additionalProxies ?? []));
 
         switch (srrContext.matchedResponseType) {
             case 'XRAY_BASE64':
@@ -112,14 +114,17 @@ export class RenderTemplatesService {
         hosts: HostWithRawInbound[];
         hostsOverrides: ExternalSquadEntity['hostOverrides'] | undefined;
         subscriptionSettings: SubscriptionSettingsEntity;
+        additionalProxies?: ResolvedProxyConfig[];
     }): Promise<ResolvedProxyConfig[]> {
-        const { user, hosts, hostsOverrides, subscriptionSettings } = params;
+        const { user, hosts, hostsOverrides, subscriptionSettings, additionalProxies } = params;
 
-        return await this.resolveProxyConfigService.resolveProxyConfig({
+        const resolved = await this.resolveProxyConfigService.resolveProxyConfig({
             subscriptionSettings,
             hosts,
             user,
             hostsOverrides,
         });
+        resolved.push(...(additionalProxies ?? []));
+        return resolved;
     }
 }

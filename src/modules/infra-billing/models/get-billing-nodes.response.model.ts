@@ -2,8 +2,17 @@ import { InfraAvailableBillingNodeEntity, InfraBillingNodeEntity } from '../enti
 
 interface IStats {
     upcomingNodesCount: number;
+    dueSoonNodesCount: number;
+    overdueNodesCount: number;
+    monthlyRenewalCost: number;
+    yearlyRenewalCost: number;
     currentMonthPayments: number;
     totalSpent: number;
+    renewalCostsByCurrency: {
+        currency: 'CNY' | 'EUR' | 'USD';
+        monthlyRenewalCost: number;
+        yearlyRenewalCost: number;
+    }[];
 }
 
 export class GetBillingNodesResponseModel {

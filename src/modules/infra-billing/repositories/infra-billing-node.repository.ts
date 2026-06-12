@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { sql } from 'kysely';
 
 import { TransactionalAdapterPrisma } from '@nestjs-cls/transactional-adapter-prisma';
@@ -11,6 +12,8 @@ import {
     InfraAvailableBillingNodeEntity,
     InfraBillingNodeEntity,
     InfraBillingNodeNotificationEntity,
+    TInfraBillingCurrency,
+    TInfraBillingCycle,
 } from '../entities';
 import { NOTIFICATION_CONFIGS, TBillingNodeNotificationType } from '../interfaces';
 import { InfraBillingNodeConverter } from '../converters';
@@ -22,6 +25,20 @@ export class InfraBillingNodeRepository implements ICrud<InfraBillingNodeEntity>
         private readonly qb: TxKyselyService,
         private readonly infraBillingNodeConverter: InfraBillingNodeConverter,
     ) {}
+
+    private buildWhereFromCriteria(
+        dto: Partial<InfraBillingNodeEntity>,
+    ): Prisma.InfraBillingNodesWhereInput {
+        // Entity relation snapshots are not valid Prisma filters.
+        const { node, provider, reminderDays, ...rest } = dto;
+        const where: Prisma.InfraBillingNodesWhereInput = rest;
+
+        if (reminderDays !== undefined) {
+            where.reminderDays = { equals: reminderDays };
+        }
+
+        return where;
+    }
 
     public async create(entity: InfraBillingNodeEntity): Promise<InfraBillingNodeEntity> {
         const model = this.infraBillingNodeConverter.fromEntityToPrismaModel(entity);
@@ -58,18 +75,61 @@ export class InfraBillingNodeRepository implements ICrud<InfraBillingNodeEntity>
         return this.infraBillingNodeConverter.fromPrismaModelToEntity(result);
     }
 
-    public async updateManyBillingAt({
+    public async updateMany({
         uuids,
+        billingAmount,
+        billingCycle,
+        billingCurrency,
+        reminderDays,
         nextBillingAt,
     }: {
         uuids: string[];
-        nextBillingAt: Date;
+        billingAmount?: number;
+        billingCycle?: TInfraBillingCycle;
+        billingCurrency?: TInfraBillingCurrency;
+        reminderDays?: number[];
+        nextBillingAt?: Date;
     }): Promise<boolean> {
+        const data: Partial<
+            Pick<
+                InfraBillingNodeEntity,
+                | 'billingAmount'
+                | 'billingCycle'
+                | 'billingCurrency'
+                | 'reminderDays'
+                | 'nextBillingAt'
+            >
+        > = {};
+
+        if (nextBillingAt !== undefined) {
+            data.nextBillingAt = nextBillingAt;
+        }
+
+        if (billingAmount !== undefined) {
+            data.billingAmount = billingAmount;
+        }
+
+        if (billingCycle !== undefined) {
+            data.billingCycle = billingCycle;
+        }
+
+        if (billingCurrency !== undefined) {
+            data.billingCurrency = billingCurrency;
+        }
+
+        if (reminderDays !== undefined) {
+            data.reminderDays = reminderDays;
+        }
+
+        if (Object.keys(data).length === 0) {
+            return true;
+        }
+
         const result = await this.prisma.tx.infraBillingNodes.updateMany({
             where: {
                 uuid: { in: uuids },
             },
-            data: { nextBillingAt },
+            data,
         });
 
         return !!result;
@@ -79,7 +139,7 @@ export class InfraBillingNodeRepository implements ICrud<InfraBillingNodeEntity>
         dto: Partial<InfraBillingNodeEntity>,
     ): Promise<InfraBillingNodeEntity[]> {
         const infraBillingNodeList = await this.prisma.tx.infraBillingNodes.findMany({
-            where: dto,
+            where: this.buildWhereFromCriteria(dto),
         });
         return this.infraBillingNodeConverter.fromPrismaModelsToEntities(infraBillingNodeList);
     }
@@ -88,7 +148,7 @@ export class InfraBillingNodeRepository implements ICrud<InfraBillingNodeEntity>
         dto: Partial<InfraBillingNodeEntity>,
     ): Promise<InfraBillingNodeEntity | null> {
         const result = await this.prisma.tx.infraBillingNodes.findFirst({
-            where: dto,
+            where: this.buildWhereFromCriteria(dto),
         });
 
         if (!result) {
@@ -144,20 +204,65 @@ export class InfraBillingNodeRepository implements ICrud<InfraBillingNodeEntity>
 
     public async getInfraSummary(): Promise<{
         upcomingNodesCount: number;
+        dueSoonNodesCount: number;
+        overdueNodesCount: number;
+        monthlyRenewalCost: number;
+        yearlyRenewalCost: number;
         currentMonthPayments: number;
         totalSpent: number;
+        renewalCostsByCurrency: {
+            currency: TInfraBillingCurrency;
+            monthlyRenewalCost: number;
+            yearlyRenewalCost: number;
+        }[];
     }> {
         const now = new Date();
         const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const dueSoonUntil = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7);
         const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
         const startOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
 
-        const [upcomingNodes, currentMonthPayments, totalSpent] = await Promise.all([
+        const [
+            upcomingNodes,
+            dueSoonNodes,
+            overdueNodes,
+            renewalCosts,
+            currentMonthPayments,
+            totalSpent,
+            renewalCostsByCurrency,
+        ] = await Promise.all([
             this.qb.kysely
                 .selectFrom('infraBillingNodes')
                 .select((eb) => eb.fn.count('uuid').as('count'))
                 .where('nextBillingAt', '>=', today)
                 .where('nextBillingAt', '<', startOfNextMonth)
+                .executeTakeFirst(),
+
+            this.qb.kysely
+                .selectFrom('infraBillingNodes')
+                .select((eb) => eb.fn.count('uuid').as('count'))
+                .where('billingAmount', '>', 0)
+                .where('nextBillingAt', '>=', today)
+                .where('nextBillingAt', '<=', dueSoonUntil)
+                .executeTakeFirst(),
+
+            this.qb.kysely
+                .selectFrom('infraBillingNodes')
+                .select((eb) => eb.fn.count('uuid').as('count'))
+                .where('billingAmount', '>', 0)
+                .where('nextBillingAt', '<', today)
+                .executeTakeFirst(),
+
+            this.qb.kysely
+                .selectFrom('infraBillingNodes')
+                .select(() => [
+                    sql<number>`coalesce(round(sum(case when billing_cycle = 'YEARLY' then billing_amount / 12 else billing_amount end)::numeric, 2), 0)`.as(
+                        'monthlyRenewalCost',
+                    ),
+                    sql<number>`coalesce(round(sum(case when billing_cycle = 'YEARLY' then billing_amount else billing_amount * 12 end)::numeric, 2), 0)`.as(
+                        'yearlyRenewalCost',
+                    ),
+                ])
                 .executeTakeFirst(),
 
             this.qb.kysely
@@ -171,12 +276,38 @@ export class InfraBillingNodeRepository implements ICrud<InfraBillingNodeEntity>
                 .selectFrom('infraBillingHistory')
                 .select(() => sql<number>`coalesce(round(sum(amount)::numeric, 2), 0)`.as('amount'))
                 .executeTakeFirst(),
+
+            this.qb.kysely
+                .selectFrom('infraBillingNodes')
+                .select((eb) => [
+                    'billingCurrency as currency',
+                    sql<number>`coalesce(round(sum(case when billing_cycle = 'YEARLY' then billing_amount / 12 else billing_amount end)::numeric, 2), 0)`.as(
+                        'monthlyRenewalCost',
+                    ),
+                    sql<number>`coalesce(round(sum(case when billing_cycle = 'YEARLY' then billing_amount else billing_amount * 12 end)::numeric, 2), 0)`.as(
+                        'yearlyRenewalCost',
+                    ),
+                    eb.fn.count('uuid').as('count'),
+                ])
+                .where('billingAmount', '>', 0)
+                .groupBy('billingCurrency')
+                .orderBy('billingCurrency', 'asc')
+                .execute(),
         ]);
 
         const result = {
             upcomingNodesCount: Number(upcomingNodes?.count || 0),
+            dueSoonNodesCount: Number(dueSoonNodes?.count || 0),
+            overdueNodesCount: Number(overdueNodes?.count || 0),
+            monthlyRenewalCost: Number(renewalCosts?.monthlyRenewalCost || 0),
+            yearlyRenewalCost: Number(renewalCosts?.yearlyRenewalCost || 0),
             currentMonthPayments: Number(currentMonthPayments?.amount || 0),
             totalSpent: Number(totalSpent?.amount || 0),
+            renewalCostsByCurrency: renewalCostsByCurrency.map((cost) => ({
+                currency: cost.currency as TInfraBillingCurrency,
+                monthlyRenewalCost: Number(cost.monthlyRenewalCost || 0),
+                yearlyRenewalCost: Number(cost.yearlyRenewalCost || 0),
+            })),
         };
 
         return result;
@@ -202,9 +333,12 @@ export class InfraBillingNodeRepository implements ICrud<InfraBillingNodeEntity>
                 'ip.loginUrl',
                 'ip.name as providerName',
                 'ibn.nextBillingAt',
+                'ibn.billingAmount',
+                'ibn.billingCurrency',
             ])
             .where('ibn.nextBillingAt', '>=', fromDate)
             .where('ibn.nextBillingAt', '<', toDate)
+            .where(sql<boolean>`${config.reminderDay} = any(ibn.reminder_days)`)
             .orderBy('ibn.nextBillingAt', 'asc')
             .execute();
 

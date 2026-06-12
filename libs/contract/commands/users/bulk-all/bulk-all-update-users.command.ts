@@ -33,6 +33,9 @@ export namespace BulkAllUpdateUsersCommand {
                 })
                 .describe('Traffic limit reset strategy'),
         ),
+        trafficResetDay: UsersSchema.shape.trafficResetDay
+            .optional()
+            .describe('Day of month when monthly traffic is reset'),
         expireAt: z.optional(
             z
                 .string()

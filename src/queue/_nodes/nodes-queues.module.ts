@@ -2,6 +2,8 @@ import { CqrsModule } from '@nestjs/cqrs';
 
 import { createDomainQueueModule } from '@queue/queue.factory';
 import { QUEUES_NAMES } from '@queue/queue.enum';
+import { EgressRulesModule } from '@modules/egress-rules/egress-rules.module';
+import { ProxyAccessAuditModule } from '@modules/proxy-access-audit/proxy-access-audit.module';
 
 import {
     NodeHealthCheckQueueProcessor,
@@ -38,5 +40,5 @@ const queues = [
 export const NodesQueuesModule = createDomainQueueModule({
     queues,
     service: NodesQueuesService,
-    imports: [CqrsModule],
+    imports: [CqrsModule, EgressRulesModule, ProxyAccessAuditModule],
 });

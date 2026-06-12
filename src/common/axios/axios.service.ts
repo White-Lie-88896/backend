@@ -36,6 +36,44 @@ import { GetNodeJwtCommand } from '@modules/keygen/commands/get-node-jwt';
 
 import { fail, ok, TResult } from '../types';
 
+const GET_ACCESS_AUDIT_LOGS_PATH = '/node/stats/get-access-audit-logs';
+
+interface INodeAccessAuditLog {
+    occurredAt: string;
+    userId?: string;
+    username?: string;
+    targetHost: string;
+    targetIp?: string;
+    targetPort?: number;
+    protocol?: string;
+    network?: string;
+    inboundTag?: string;
+    outboundTag?: string;
+    ruleUuid?: string;
+    ruleName?: string;
+    ruleAction?: string;
+    uplinkBytes?: string;
+    downlinkBytes?: string;
+    totalBytes?: string;
+    sessionId?: string;
+    metadata?: Record<string, unknown>;
+}
+
+interface IGetAccessAuditLogsRequest {
+    cursor?: number;
+    includeLogs?: boolean;
+    reset?: boolean;
+}
+
+interface IGetAccessAuditLogsResponse {
+    response: {
+        bufferSize: number;
+        cursor: number;
+        dropped: number;
+        logs: INodeAccessAuditLog[];
+    };
+}
+
 @Injectable()
 export class AxiosService {
     public axiosInstance: AxiosInstance;
@@ -357,6 +395,42 @@ export class AxiosService {
                 return fail(ERRORS.NODE_ERROR_WITH_MSG.withMessage(JSON.stringify(error.message)));
             } else {
                 this.logger.error('Error in getAllInboundStats:', error);
+
+                return fail(
+                    ERRORS.NODE_ERROR_WITH_MSG.withMessage(
+                        JSON.stringify(error) ?? 'Unknown error',
+                    ),
+                );
+            }
+        }
+    }
+
+    public async getAccessAuditLogs(
+        data: IGetAccessAuditLogsRequest,
+        url: string,
+        port: null | number,
+    ): Promise<TResult<IGetAccessAuditLogsResponse['response']>> {
+        const nodeUrl = this.getNodeUrl(url, GET_ACCESS_AUDIT_LOGS_PATH, port);
+
+        try {
+            const response = await this.axiosInstance.post<IGetAccessAuditLogsResponse>(
+                nodeUrl,
+                data,
+                {
+                    timeout: 15_000,
+                },
+            );
+
+            return ok(response.data.response);
+        } catch (error) {
+            if (error instanceof AxiosError) {
+                if (error.response?.status === 404) {
+                    return ok({ logs: [], dropped: 0, bufferSize: 0, cursor: 0 });
+                }
+
+                return fail(ERRORS.NODE_ERROR_WITH_MSG.withMessage(JSON.stringify(error.message)));
+            } else {
+                this.logger.error('Error in getAccessAuditLogs:', error);
 
                 return fail(
                     ERRORS.NODE_ERROR_WITH_MSG.withMessage(

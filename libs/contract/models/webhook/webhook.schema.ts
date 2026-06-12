@@ -97,6 +97,8 @@ export const RemnawaveWebhookCrmEvents = z.object({
             .string()
             .datetime()
             .transform((str) => new Date(str)),
+        billingAmount: z.number().optional(),
+        billingCurrency: z.string().optional(),
         loginUrl: z.string(),
     }),
 });

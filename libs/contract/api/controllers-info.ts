@@ -1,4 +1,8 @@
 export const CONTROLLERS_INFO = {
+    AUDIT_LOGS: {
+        tag: 'Audit Logs Controller',
+        description: 'Query and manage administrator and system audit records.',
+    },
     AUTH: {
         tag: 'Auth Controller',
         description: 'Used to authenticate admin users.',
@@ -11,6 +15,14 @@ export const CONTROLLERS_INFO = {
         tag: 'API Tokens Controller',
         description:
             "Manage API tokens to use in your code. This controller can't be used with API token, only with Admin JWT token",
+    },
+    EGRESS_RULES: {
+        tag: 'Egress Rules Controller',
+        description: 'Manage egress rules for outbound traffic blocking.',
+    },
+    PROXY_ACCESS_AUDIT: {
+        tag: 'Proxy Access Audit Controller',
+        description: 'Ingest, query, and manage proxy access audit records.',
     },
     USERS: {
         tag: 'Users Controller',

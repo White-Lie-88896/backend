@@ -569,14 +569,18 @@ export class UsersRepository {
             .orderBy('tId');
 
         if (strategy === 'MONTH') {
-            targetIdsQuery = targetIdsQuery.where(
-                sql`LEAST(
-                    "traffic_reset_day",
-                    EXTRACT(DAY FROM date_trunc('month', CURRENT_DATE) + interval '1 month - 1 day')
-                )`,
-                '=',
-                sql`EXTRACT(DAY FROM CURRENT_DATE)`,
-            );
+            targetIdsQuery = targetIdsQuery
+                .where(
+                    sql`LEAST(
+                        "traffic_reset_day",
+                        EXTRACT(DAY FROM date_trunc('month', CURRENT_DATE) + interval '1 month - 1 day')
+                    )`,
+                    '=',
+                    sql`EXTRACT(DAY FROM CURRENT_DATE)`,
+                )
+                .where(
+                    sql<boolean>`"last_traffic_reset_at" IS NULL OR "last_traffic_reset_at"::date < CURRENT_DATE`,
+                );
         }
 
         if (strategy === 'MONTH_ROLLING') {
@@ -589,6 +593,9 @@ export class UsersRepository {
                             )`,
                     '=',
                     sql`EXTRACT(DAY FROM CURRENT_DATE)`,
+                )
+                .where(
+                    sql<boolean>`"last_traffic_reset_at" IS NULL OR "last_traffic_reset_at"::date < CURRENT_DATE`,
                 );
         }
 
@@ -656,14 +663,18 @@ export class UsersRepository {
             .forUpdate();
 
         if (strategy === 'MONTH') {
-            targetIdsQuery = targetIdsQuery.where(
-                sql`LEAST(
-                    "traffic_reset_day",
-                    EXTRACT(DAY FROM date_trunc('month', CURRENT_DATE) + interval '1 month - 1 day')
-                )`,
-                '=',
-                sql`EXTRACT(DAY FROM CURRENT_DATE)`,
-            );
+            targetIdsQuery = targetIdsQuery
+                .where(
+                    sql`LEAST(
+                        "traffic_reset_day",
+                        EXTRACT(DAY FROM date_trunc('month', CURRENT_DATE) + interval '1 month - 1 day')
+                    )`,
+                    '=',
+                    sql`EXTRACT(DAY FROM CURRENT_DATE)`,
+                )
+                .where(
+                    sql<boolean>`"last_traffic_reset_at" IS NULL OR "last_traffic_reset_at"::date < CURRENT_DATE`,
+                );
         }
 
         if (strategy === 'MONTH_ROLLING') {
@@ -676,6 +687,9 @@ export class UsersRepository {
                         )`,
                     '=',
                     sql`EXTRACT(DAY FROM CURRENT_DATE)`,
+                )
+                .where(
+                    sql<boolean>`"last_traffic_reset_at" IS NULL OR "last_traffic_reset_at"::date < CURRENT_DATE`,
                 );
         }
 

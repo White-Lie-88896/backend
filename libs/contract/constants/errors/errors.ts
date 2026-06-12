@@ -1144,4 +1144,44 @@ export const ERRORS = {
         message: 'Get torrent blocker reports error',
         httpCode: 500,
     },
+    GET_AUDIT_LOGS_ERROR: {
+        code: 'A228',
+        message: 'Get audit logs error',
+        httpCode: 500,
+    },
+    AUDIT_LOG_NOT_FOUND: {
+        code: 'A229',
+        message: 'Audit log not found',
+        httpCode: 404,
+    },
+    DELETE_AUDIT_LOG_ERROR: {
+        code: 'A230',
+        message: 'Delete audit log error',
+        httpCode: 500,
+    },
+    PROXY_OUTBOUND_NOT_FOUND: {
+        code: 'A231',
+        message: 'Proxy outbound not found',
+        httpCode: 404,
+    },
+    INGEST_PROXY_ACCESS_AUDIT_ERROR: {
+        code: 'A232',
+        message: 'Ingest proxy access audit logs error',
+        httpCode: 500,
+    },
+    GET_PROXY_ACCESS_AUDIT_ERROR: {
+        code: 'A233',
+        message: 'Get proxy access audit data error',
+        httpCode: 500,
+    },
+    UPDATE_PROXY_ACCESS_AUDIT_SETTINGS_ERROR: {
+        code: 'A234',
+        message: 'Update proxy access audit settings error',
+        httpCode: 500,
+    },
+    CLEANUP_PROXY_ACCESS_AUDIT_ERROR: {
+        code: 'A235',
+        message: 'Cleanup proxy access audit logs error',
+        httpCode: 500,
+    },
 } as const;

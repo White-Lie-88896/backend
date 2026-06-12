@@ -157,9 +157,9 @@ export class NodesRepository implements ICrud<NodesEntity> {
 
     public async findByCriteria(dto: Partial<NodesEntity>): Promise<NodesEntity[]> {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { tags, ...rest } = dto;
+        const { tags, proxyChainConfig, ...rest } = dto;
         const nodesList = await this.prisma.tx.nodes.findMany({
-            where: rest,
+            where: rest as any,
             orderBy: {
                 viewPosition: 'asc',
             },
@@ -181,9 +181,9 @@ export class NodesRepository implements ICrud<NodesEntity> {
 
     public async findFirstByCriteria(dto: Partial<NodesEntity>): Promise<NodesEntity | null> {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { tags, ...rest } = dto;
+        const { tags, proxyChainConfig, ...rest } = dto;
         const result = await this.prisma.tx.nodes.findFirst({
-            where: rest,
+            where: rest as any,
             include: INCLUDE_RESOLVED_INBOUNDS,
         });
 

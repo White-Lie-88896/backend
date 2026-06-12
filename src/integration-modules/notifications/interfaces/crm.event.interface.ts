@@ -4,6 +4,8 @@ interface ICrmEvent {
     providerName: string;
     nodeName: string;
     nextBillingAt: Date;
+    billingAmount?: number;
+    billingCurrency?: string;
     loginUrl: string;
 }
 

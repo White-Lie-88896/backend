@@ -1,6 +1,10 @@
 import { z } from 'zod';
 
-import { InfraBillingAvailableNodeSchema, InfraBillingNodeSchema } from '../../models';
+import {
+    InfraBillingAvailableNodeSchema,
+    InfraBillingNodeSchema,
+    InfraBillingStatsSchema,
+} from '../../models';
 import { INFRA_BILLING_ROUTES, REST_API } from '../../api';
 import { getEndpointDetails } from '../../constants';
 
@@ -26,11 +30,7 @@ export namespace DeleteInfraBillingNodeByUuidCommand {
             billingNodes: z.array(InfraBillingNodeSchema),
             availableBillingNodes: z.array(InfraBillingAvailableNodeSchema),
             totalAvailableBillingNodes: z.number(),
-            stats: z.object({
-                upcomingNodesCount: z.number(),
-                currentMonthPayments: z.number(),
-                totalSpent: z.number(),
-            }),
+            stats: InfraBillingStatsSchema,
         }),
     });
 

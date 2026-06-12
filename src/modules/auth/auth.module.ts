@@ -5,6 +5,8 @@ import { JwtModule } from '@nestjs/jwt';
 
 import { getJWTConfig } from '@common/config/jwt/jwt.config';
 
+import { AuditLogsModule } from '@modules/audit-logs';
+
 import { InjectRemnawaveSettingsMiddleware } from './middlewares/inject-remnawave-settings';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
@@ -12,7 +14,7 @@ import { JwtStrategy } from './strategies';
 import { COMMANDS } from './commands';
 
 @Module({
-    imports: [CqrsModule, JwtModule.registerAsync(getJWTConfig()), HttpModule],
+    imports: [CqrsModule, JwtModule.registerAsync(getJWTConfig()), HttpModule, AuditLogsModule],
     controllers: [AuthController],
     providers: [JwtStrategy, AuthService, ...COMMANDS],
 })

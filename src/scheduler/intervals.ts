@@ -6,6 +6,7 @@ const EVERY_45_SECONDS = '*/45 * * * * *';
 const EVERY_DAY_AT_MIDNIGHT_AND_5_MINUTES = '5 0 * * *';
 const EVERY_DAY_AT_MIDNIGHT_AND_10_MINUTES = '10 0 * * *';
 const EVERY_DAY_AT_MIDNIGHT_AND_20_MINUTES = '20 0 * * *';
+const EVERY_DAY_AT_2_15 = '15 2 * * *';
 const EVERY_WEEK_AT_MONDAY_MIDNIGHT_AND_15_MINUTES = '15 0 * * 1';
 
 const EVERY_WEEK_AT_MONDAY_00_30 = '30 0 * * 1';
@@ -48,5 +49,8 @@ export const JOBS_INTERVALS = {
     },
     CRM: {
         INFRA_BILLING_NODES_NOTIFICATIONS: CronExpression.EVERY_DAY_AT_5PM,
+    },
+    PROXY_ACCESS_AUDIT: {
+        CLEANUP: EVERY_DAY_AT_2_15,
     },
 } as const;

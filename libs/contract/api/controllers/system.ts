@@ -14,6 +14,7 @@ export const SYSTEM_ROUTES = {
     },
     HEALTH: 'health',
     METADATA: 'metadata',
+    DIAGNOSTICS: 'diagnostics',
     TESTERS: {
         SRR_MATCHER: 'testers/srr-matcher',
     },

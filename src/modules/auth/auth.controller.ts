@@ -25,6 +25,7 @@ import { AUTH_CONTROLLER } from '@libs/contracts/api/controllers/auth';
 import { CONTROLLERS_INFO } from '@libs/contracts/api';
 
 import { RemnawaveSettingsEntity } from '@modules/remnawave-settings/entities';
+import { AuditLogsService } from '@modules/audit-logs';
 
 import {
     GetStatusResponseDto,
@@ -48,7 +49,10 @@ import { AuthService } from './auth.service';
 @UseFilters(HttpExceptionFilter)
 @Controller(AUTH_CONTROLLER)
 export class AuthController {
-    constructor(private readonly authService: AuthService) {}
+    constructor(
+        private readonly authService: AuthService,
+        private readonly auditLogsService: AuditLogsService,
+    ) {}
 
     @ApiResponse({ type: LoginResponseDto, description: 'Access token for further requests' })
     @ApiUnauthorizedResponse({
@@ -73,6 +77,17 @@ export class AuthController {
         @UserAgent() userAgent: string,
     ): Promise<LoginResponseDto> {
         const result = await this.authService.login(body, ip, userAgent);
+
+        await this.auditLogsService.createLog({
+            actorType: 'admin',
+            actorName: body.username,
+            action: 'admin.login',
+            resourceType: 'admin',
+            ip,
+            userAgent,
+            result: result.isOk ? 'success' : 'failed',
+            message: result.isOk ? 'Administrator login succeeded.' : 'Administrator login failed.',
+        });
 
         const data = errorHandler(result);
         return {

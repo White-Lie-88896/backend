@@ -1,6 +1,13 @@
 import { z } from 'zod';
 
-import { InfraBillingAvailableNodeSchema, InfraBillingNodeSchema } from '../../models';
+import {
+    InfraBillingAvailableNodeSchema,
+    InfraBillingCycleSchema,
+    InfraBillingCurrencySchema,
+    InfraBillingNodeSchema,
+    InfraBillingReminderDaysSchema,
+    InfraBillingStatsSchema,
+} from '../../models';
 import { INFRA_BILLING_ROUTES, REST_API } from '../../api';
 import { getEndpointDetails } from '../../constants';
 
@@ -17,6 +24,10 @@ export namespace CreateInfraBillingNodeCommand {
     export const RequestSchema = z.object({
         providerUuid: z.string().uuid(),
         nodeUuid: z.string().uuid(),
+        billingAmount: z.coerce.number().min(0).optional(),
+        billingCycle: InfraBillingCycleSchema.optional(),
+        billingCurrency: InfraBillingCurrencySchema.optional(),
+        reminderDays: InfraBillingReminderDaysSchema.optional(),
         nextBillingAt: z
             .string({
                 invalid_type_error: 'Invalid date format',
@@ -35,11 +46,7 @@ export namespace CreateInfraBillingNodeCommand {
             billingNodes: z.array(InfraBillingNodeSchema),
             availableBillingNodes: z.array(InfraBillingAvailableNodeSchema),
             totalAvailableBillingNodes: z.number(),
-            stats: z.object({
-                upcomingNodesCount: z.number(),
-                currentMonthPayments: z.number(),
-                totalSpent: z.number(),
-            }),
+            stats: InfraBillingStatsSchema,
         }),
     });
 

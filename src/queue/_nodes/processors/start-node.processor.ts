@@ -20,6 +20,10 @@ import { UpdateNodeCommand } from '@modules/nodes/commands/update-node';
 
 import { QUEUES_NAMES } from '@queue/queue.enum';
 
+import { EgressRulesService } from '@modules/egress-rules/egress-rules.service';
+import { XRayConfig } from '@common/helpers/xray-config/xray-config.validator';
+import { injectProxyChain } from '@common/helpers/proxy-chain/proxy-chain-injector';
+
 import { NODES_JOB_NAMES } from '../constants/nodes-job-name.constant';
 import { NodesQueuesService } from '../nodes-queues.service';
 
@@ -36,6 +40,7 @@ export class StartNodeProcessor extends WorkerHost {
         private readonly eventEmitter: EventEmitter2,
         private readonly commandBus: CommandBus,
         private readonly rawCacheService: RawCacheService,
+        private readonly egressRulesService: EgressRulesService,
     ) {
         super();
     }
@@ -195,12 +200,29 @@ export class StartNodeProcessor extends WorkerHost {
                 throw new Error('Failed to get config for node');
             }
 
+            // 注入安全出口拦截规则
+            const xrayConfigWithEgress = await this.egressRulesService.injectEgressRulesIntoConfig(
+                config.response.config,
+            );
+
+            // 注入链式代理（如果节点配置了上游代理）
+            const xrayConfig = injectProxyChain(xrayConfigWithEgress, node.proxyChainConfig);
+
+            const updatedXRayConfig = new XRayConfig(xrayConfig);
+            const updatedHash = updatedXRayConfig.getConfigHash();
+
             const reqStartTime = getTime();
 
             const startNodeResult = await this.axios.startXray(
                 {
-                    xrayConfig: config.response.config as unknown as Record<string, unknown>,
-                    internals: { hashes: config.response.hashesPayload, forceRestart: false },
+                    xrayConfig: xrayConfig as unknown as Record<string, unknown>,
+                    internals: {
+                        hashes: {
+                            ...config.response.hashesPayload,
+                            emptyConfig: updatedHash,
+                        },
+                        forceRestart: false,
+                    },
                 },
                 node.address,
                 node.port,

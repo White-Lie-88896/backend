@@ -58,6 +58,7 @@ export const EVENTS = {
     },
     CRM: {
         INFRA_BILLING_NODE_PAYMENT_IN_7_DAYS: 'crm.infra_billing_node_payment_in_7_days',
+        INFRA_BILLING_NODE_PAYMENT_IN_3_DAYS: 'crm.infra_billing_node_payment_in_3_days',
         INFRA_BILLING_NODE_PAYMENT_IN_48HRS: 'crm.infra_billing_node_payment_in_48hrs',
         INFRA_BILLING_NODE_PAYMENT_IN_24HRS: 'crm.infra_billing_node_payment_in_24hrs',
         INFRA_BILLING_NODE_PAYMENT_DUE_TODAY: 'crm.infra_billing_node_payment_due_today',

@@ -1,7 +1,9 @@
 export * from './api-tokens';
+export * from './audit-logs';
 export * from './auth';
 export * from './bandwidth-stats';
 export * from './config-profiles';
+export * from './egress-rules';
 export * from './external-squads';
 export * from './hosts';
 export * from './hwid';
@@ -13,6 +15,7 @@ export * from './metadata';
 export * from './node-plugins';
 export * from './nodes';
 export * from './passkeys';
+export * from './proxy-access-audit';
 export * from './remnawave-settings';
 export * from './snippets';
 export * from './subscription';
