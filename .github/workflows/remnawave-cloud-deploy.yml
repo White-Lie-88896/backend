@@ -102,7 +102,8 @@ jobs:
           repository: ${{ inputs.frontend_repository }}
           ref: ${{ inputs.frontend_ref }}
           path: remnawave-frontend
-          token: ${{ secrets.FRONTEND_REPO_TOKEN || github.token }}
+          ssh-key: ${{ secrets.FRONTEND_DEPLOY_KEY }}
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -291,6 +292,19 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -p "${DC1_PORT:-22}" "$DC1_HOST" >> ~/.ssh/known_hosts
 
+      - name: Verify restricted DC1 deploy user
+        if: ${{ !inputs.plan_only && inputs.deploy_to_prod }}
+        shell: bash
+        env:
+          DC1_HOST: ${{ secrets.DC1_HOST }}
+          DC1_USER: ${{ secrets.DC1_USER || 'root' }}
+          DC1_PORT: ${{ secrets.DC1_PORT || '22' }}
+        run: |
+          set -euo pipefail
+
+          target="${DC1_USER:-root}@${DC1_HOST}"
+          ssh -p "${DC1_PORT:-22}" "$target" probe
+
       - name: Login DC1 to GHCR for pull
         if: ${{ !inputs.plan_only && inputs.deploy_to_prod }}
         shell: bash
@@ -298,18 +312,13 @@ jobs:
           DC1_HOST: ${{ secrets.DC1_HOST }}
           DC1_USER: ${{ secrets.DC1_USER || 'root' }}
           DC1_PORT: ${{ secrets.DC1_PORT || '22' }}
-          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME || github.actor }}
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
-          if [ -z "${GHCR_TOKEN:-}" ]; then
-            echo "GHCR_TOKEN is empty. Assuming the image is public or DC1 is already logged in."
-            exit 0
-          fi
-
           target="${DC1_USER:-root}@${DC1_HOST}"
-          printf '%s' "$GHCR_TOKEN" | ssh -p "${DC1_PORT:-22}" "$target" "docker login ghcr.io -u \"${GHCR_USERNAME}\" --password-stdin"
+          printf '%s' "$GHCR_TOKEN" | ssh -p "${DC1_PORT:-22}" "$target" "ghcr-login \"$GHCR_USERNAME\""
 
       - name: Deploy pulled image on DC1
         if: ${{ !inputs.plan_only && inputs.deploy_to_prod }}
@@ -340,4 +349,4 @@ jobs:
           )
 
           printf -v quoted_args '%q ' "${remote_args[@]}"
-          ssh -p "${DC1_PORT:-22}" "$target" "bash -s -- $quoted_args" < remnawave-backend/scripts/deploy-remnawave-pulled-image.sh
+          ssh -p "${DC1_PORT:-22}" "$target" "deploy $quoted_args"

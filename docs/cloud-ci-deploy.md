@@ -16,14 +16,12 @@ The production server does not build images.
 Set these in the backend repository under `Settings -> Secrets and variables -> Actions`.
 
 - `DC1_HOST`: public IP or DNS name for the production server.
-- `DC1_USER`: SSH user, usually `root` or a Docker-capable deploy user. If omitted, the workflow uses `root`.
+- `DC1_USER`: restricted SSH deploy user. The configured value is `remnawave-deploy`.
 - `DC1_PORT`: SSH port. If omitted, the workflow uses `22`.
-- `DC1_SSH_KEY`: private SSH key that can log in to `DC1`.
-- `GHCR_TOKEN`: GitHub PAT with `read:packages` so `DC1` can pull private GHCR images. Not required if the GHCR package is public or DC1 is already logged in.
-- `GHCR_USERNAME`: GitHub username for the GHCR pull login. If omitted, the workflow uses the GitHub actor.
-- `FRONTEND_REPO_TOKEN`: PAT with read access to `White-Lie-88896/frontend` if the frontend repo is private and the default workflow token cannot read it.
+- `DC1_SSH_KEY`: private SSH key for `remnawave-deploy`. The key is forced to the `/usr/local/sbin/remnawave-deploy-dispatch` command on DC1.
+- `FRONTEND_DEPLOY_KEY`: read-only deploy key for `White-Lie-88896/frontend`.
 
-The workflow pushes with the built-in `GITHUB_TOKEN`, so the backend repository needs workflow permission `packages: write`, which is already declared in the workflow file.
+The workflow pushes with the built-in `GITHUB_TOKEN`, and DC1 pulls using the same temporary workflow token during the deploy job. Long-lived `GHCR_TOKEN`, `GHCR_USERNAME`, and `FRONTEND_REPO_TOKEN` secrets are not required.
 
 ## First safe run
 
