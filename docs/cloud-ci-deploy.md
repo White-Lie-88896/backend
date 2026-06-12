@@ -29,6 +29,13 @@ Open GitHub Actions and run `Cloud Build and Deploy to DC1`.
 
 Keep `plan_only` set to `true`. The workflow checks out backend/frontend, prepares the image tag, writes a summary, then stops before Docker build, push, SSH, or production changes.
 
+To verify only the restricted DC1 SSH deploy user, run with:
+
+- `plan_only`: `true`
+- `verify_deploy_credentials_only`: `true`
+
+That mode runs the forced `probe` command and does not build, push, or deploy.
+
 ## Build-only run
 
 Run the same workflow with:
