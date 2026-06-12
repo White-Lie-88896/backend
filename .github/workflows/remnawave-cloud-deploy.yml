@@ -167,7 +167,24 @@ jobs:
       - name: Install frontend dependencies
         if: ${{ !inputs.plan_only }}
         working-directory: remnawave-frontend
-        run: npm ci
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          npm config set fetch-retries 5
+          npm config set fetch-retry-mintimeout 20000
+          npm config set fetch-retry-maxtimeout 120000
+
+          for attempt in 1 2 3; do
+            if npm ci; then
+              exit 0
+            fi
+
+            echo "npm ci failed on attempt ${attempt}."
+            sleep $((attempt * 20))
+          done
+
+          npm ci
 
       - name: Typecheck frontend
         if: ${{ !inputs.plan_only && !inputs.skip_frontend_typecheck }}
